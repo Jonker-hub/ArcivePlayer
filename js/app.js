@@ -276,7 +276,7 @@ async function runAi(q, isCurrent) {
   box.innerHTML = `
     <section class="ai-box loading">
       <div class="ai-head">${icons.sparkle}<span>KI-Suche</span></div>
-      <p class="ai-text">Die KI sucht auf archive.org nach „${esc(q)}“ … (dauert ca. 10–30 Sek.)</p>
+      <p class="ai-text">Die KI sucht auf archive.org nach „${esc(q)}“ … (dauert ca. 10–20 Sek.)</p>
       <div class="ai-dots"><span></span><span></span><span></span></div>
     </section>`;
   try {

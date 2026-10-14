@@ -1,99 +1,95 @@
-// KI-Suche mit Google Gemini (Gratis-Tarif) als Such-Agent: Gemini durchsucht archive.org selbst
-// mit mehreren Anfragen und Kennungs-Präfixen, prüft Kandidaten (vollständig?, Länge, Sprache)
-// und wählt die besten aus – wie ein KI-Chat, der für dich auf archive.org sucht.
+// KI-Suche über OpenRouter (Claude Haiku 5.5) als Such-Agent: sucht wie ein KI-Chat auf archive.org –
+// per Websuche (nur archive.org) und mit eigenen archive.org-Werkzeugen –, prüft Kandidaten
+// (vollständig?, Länge, Sprache) und wählt die besten aus.
 
-const MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash-lite']; // zweites, falls das erste überlastet ist
-const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models';
+const MODEL = 'anthropic/claude-haiku-5.5';
+const OPENROUTER = 'https://openrouter.ai/api/v1/chat/completions';
 const BASE = 'https://archive.org';
 const PLAYABLE = /mp3|ogg|m4a|aac|opus|flac|wave|h\.264|mpeg4/i;
-const MAX_ROUNDS = 6;
+const MAX_ROUNDS = 8;
 
 const first = (v) => (Array.isArray(v) ? v[0] : v);
 const strip = (s) => String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 
 export class QuotaError extends Error {}
-export { BusyError };
+export class BusyError extends Error {}
 
 const SYSTEM = `Du findest Hörbücher und andere Audioaufnahmen auf archive.org für eine Person, die frei beschreibt, was sie hören möchte (Titel, Autor:in, Thema oder Beschreibung, oft auf Deutsch, auch mit Tippfehlern).
 
 Vorgehen:
 1. Überlege, welches Werk gemeint ist (Originaltitel, Übersetzungen, Schreibvarianten, Autor:in).
-2. Suche gründlich mit search_archive – mehrere Anfragen, z. B. Originaltitel, deutscher Titel, Titel + Autor:in, Titel + „audiobook“/„hörbuch“.
+2. Suche im Web (nur archive.org) und gründlich mit search_archive – mehrere Anfragen, z. B. Originaltitel, deutscher Titel, Titel + Autor:in, Titel + „audiobook“/„hörbuch“/„unabridged“.
 3. Viele Uploads sind schlecht beschriftet (Titel unvollständig, Autor leer). Der Name steckt dann oft nur in der Kennung, z. B. „ZeroToOnePeterThielUnabridged“. Suche deshalb zusätzlich mit search_identifier nach Kennungs-Anfängen wie „zerotoone“, „zero-to-one“, „peterthiel“.
-4. Prüfe die besten Kandidaten mit inspect_items (vollständig oder Zusammenfassung, Gesamtdauer, Sprache).
+4. Prüfe die besten Kandidaten mit inspect_items (vollständig oder Zusammenfassung, Gesamtdauer, Sprache) – auch alle, die du über die Websuche gefunden hast (Kennung = Teil nach archive.org/details/).
 5. Rufe zum Schluss submit_results auf: die besten Treffer (höchstens 8), das beste zuerst, je ein kurzer deutscher Satz warum (z. B. „Vollständige Lesung, ca. 5 Std., Englisch“).
 
-Regeln: Nur Kennungen verwenden, die ein Werkzeug geliefert hat. Vollständige Hörbücher vor Zusammenfassungen, Rezensionen oder Podcasts über das Werk (diese dürfen als Alternative dabei sein). Sucht die Person auf Deutsch, deutsche Aufnahmen zuerst, wenn es welche gibt. Gibt es nichts Passendes, gib eine leere Liste zurück und erkläre kurz warum.`;
+Regeln: Nur Kennungen verwenden, die du in Ergebnissen gesehen hast. Vollständige Hörbücher vor Zusammenfassungen, Rezensionen oder Podcasts über das Werk (diese dürfen als Alternative dabei sein). Sucht die Person auf Deutsch, deutsche Aufnahmen zuerst, wenn es welche gibt. Gibt es nichts Passendes, gib eine leere Liste zurück und erkläre kurz warum.`;
 
-const TOOLS = [{
-  functionDeclarations: [
-    {
-      name: 'search_archive',
-      description: 'Durchsucht archive.org wie die Suche auf der Webseite (Titel, Autor:in, Beschreibung, Schlagwörter). Liefert nur abspielbare Einträge.',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string', description: 'Suchbegriffe, z. B. "zero to one thiel" oder "die verwandlung kafka".' } },
-        required: ['query'],
-      },
-    },
-    {
-      name: 'search_identifier',
-      description: 'Findet Einträge, deren Kennung (identifier) mit einem der Präfixe beginnt, z. B. "zerotoone", "zero-to-one", "peterthiel". Hilft bei schlecht beschrifteten Uploads. Liefert nur abspielbare Einträge.',
-      parameters: {
-        type: 'object',
-        properties: { prefixes: { type: 'array', items: { type: 'string' }, description: 'Kleingeschriebene Anfänge, mind. 6 Zeichen, nur a-z, 0-9, - und _.' } },
-        required: ['prefixes'],
-      },
-    },
-    {
-      name: 'inspect_items',
-      description: 'Details zu bis zu 8 Einträgen: Titel, Autor:in, Sprache, Beschreibung (gekürzt), Anzahl abspielbarer Dateien, Gesamtdauer in Minuten.',
-      parameters: {
-        type: 'object',
-        properties: { identifiers: { type: 'array', items: { type: 'string' } } },
-        required: ['identifiers'],
-      },
-    },
-    {
-      name: 'submit_results',
-      description: 'Gibt die endgültige Auswahl zurück. Genau einmal ganz am Ende aufrufen.',
-      parameters: {
-        type: 'object',
-        properties: {
-          interpretation: { type: 'string', description: 'Ein kurzer deutscher Satz: was gesucht und was gefunden wurde.' },
-          results: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: { identifier: { type: 'string' }, reason: { type: 'string' } },
-              required: ['identifier', 'reason'],
-            },
-          },
+const fn = (name, description, parameters) => ({ type: 'function', function: { name, description, parameters } });
+
+const TOOLS = [
+  {
+    type: 'openrouter:web_search',
+    parameters: { max_results: 8, max_uses: 3, allowed_domains: ['archive.org'] },
+  },
+  fn('search_archive', 'Durchsucht archive.org wie die Suche auf der Webseite (Titel, Autor:in, Beschreibung, Schlagwörter). Liefert nur abspielbare Einträge.', {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'Suchbegriffe, z. B. "zero to one thiel" oder "die verwandlung kafka".' } },
+    required: ['query'],
+  }),
+  fn('search_identifier', 'Findet Einträge, deren Kennung (identifier) mit einem der Präfixe beginnt, z. B. "zerotoone", "zero-to-one", "peterthiel". Hilft bei schlecht beschrifteten Uploads. Liefert nur abspielbare Einträge.', {
+    type: 'object',
+    properties: { prefixes: { type: 'array', items: { type: 'string' }, description: 'Kleingeschriebene Anfänge, mind. 6 Zeichen, nur a-z, 0-9, - und _.' } },
+    required: ['prefixes'],
+  }),
+  fn('inspect_items', 'Details zu bis zu 8 Einträgen: Titel, Autor:in, Sprache, Beschreibung (gekürzt), Anzahl abspielbarer Dateien, Gesamtdauer in Minuten.', {
+    type: 'object',
+    properties: { identifiers: { type: 'array', items: { type: 'string' } } },
+    required: ['identifiers'],
+  }),
+  fn('submit_results', 'Gibt die endgültige Auswahl zurück. Genau einmal ganz am Ende aufrufen.', {
+    type: 'object',
+    properties: {
+      interpretation: { type: 'string', description: 'Ein kurzer deutscher Satz: was gesucht und was gefunden wurde.' },
+      results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { identifier: { type: 'string' }, reason: { type: 'string', description: 'Kurz auf Deutsch, warum dieser Treffer passt.' } },
+          required: ['identifier', 'reason'],
         },
-        required: ['interpretation', 'results'],
       },
     },
-  ],
-}];
+    required: ['interpretation', 'results'],
+  }),
+];
 
-class BusyError extends Error {}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function gemini(apiKey, model, body, fetchImpl) {
+async function chat(apiKey, messages, fetchImpl) {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetchImpl(`${GEMINI}/${model}:generateContent`, {
+    const res = await fetchImpl(OPENROUTER, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify(body),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://jonker-hub.github.io/ArcivePlayer/',
+        'X-Title': 'ArcivePlayer',
+      },
+      body: JSON.stringify({ model: MODEL, max_tokens: 4000, messages, tools: TOOLS, tool_choice: 'auto' }),
     });
     const data = await res.json().catch(() => ({}));
-    if (res.ok) return data.candidates?.[0]?.content || { role: 'model', parts: [] };
-    if (res.status === 503 || res.status === 500) {
-      if (attempt < 2) { await sleep(1500 * (attempt + 1)); continue; }
-      throw new BusyError('Die KI ist gerade überlastet. Bitte gleich nochmal versuchen.');
+    if (res.ok && !data.error) {
+      const choice = data.choices?.[0];
+      if (!choice) throw new Error('Leere Antwort der KI');
+      return choice.message;
     }
-    if (res.status === 429) throw new QuotaError('Gratis-Kontingent der KI gerade aufgebraucht. In einer Minute bzw. morgen geht es wieder.');
-    throw new Error(`KI-Fehler (${res.status}): ${data.error?.message || ''}`.trim());
+    const status = data.error?.code || res.status;
+    if ((status === 502 || status === 503 || status === 500) && attempt < 2) { await sleep(1500 * (attempt + 1)); continue; }
+    if (status === 402) throw new QuotaError('OpenRouter-Guthaben aufgebraucht.');
+    if (status === 429) throw new QuotaError('Zu viele Anfragen an die KI. Bitte kurz warten.');
+    if (status === 502 || status === 503) throw new BusyError('Die KI ist gerade überlastet. Bitte gleich nochmal versuchen.');
+    throw new Error(`KI-Fehler (${status}): ${data.error?.message || ''}`.trim());
   }
 }
 
@@ -185,59 +181,36 @@ async function runTool(name, args, fetchImpl) {
 }
 
 export async function aiSearch(apiKey, userQuery, fetchImpl = fetch) {
-  const contents = [{ role: 'user', parts: [{ text: userQuery }] }];
-  const seen = new Set();
+  const messages = [{ role: 'system', content: SYSTEM }, { role: 'user', content: userQuery }];
   let submitted = null;
-  let model = MODELS[0];
 
   for (let round = 0; round < MAX_ROUNDS && !submitted; round++) {
     if (round === MAX_ROUNDS - 1) {
-      contents.push({ role: 'user', parts: [{ text: 'Letzte Runde: Rufe jetzt submit_results mit den bisher besten Treffern auf.' }] });
+      messages.push({ role: 'user', content: 'Letzte Runde: Rufe jetzt submit_results mit den bisher besten Treffern auf.' });
     }
-    const body = {
-      systemInstruction: { parts: [{ text: SYSTEM }] },
-      contents,
-      tools: TOOLS,
-      toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
-    };
-    let content;
-    try {
-      content = await gemini(apiKey, model, body, fetchImpl);
-    } catch (e) {
-      // Überlastet gleich zu Beginn: ganze Suche mit dem Ersatzmodell (Signaturen sind modellgebunden)
-      if (!(e instanceof BusyError) || round > 0 || model === MODELS[1]) throw e;
-      model = MODELS[1];
-      content = await gemini(apiKey, model, body, fetchImpl);
-    }
-    contents.push(content); // unverändert zurückgeben (enthält thoughtSignature)
-
-    const calls = (content.parts || []).filter((p) => p.functionCall).map((p) => p.functionCall);
+    const msg = await chat(apiKey, messages, fetchImpl);
+    messages.push(msg); // unverändert zurückgeben
+    const calls = msg.tool_calls || [];
     if (!calls.length) break;
 
-    const responses = await Promise.all(calls.map(async (call) => {
-      let response;
-      if (call.name === 'submit_results') {
-        submitted = call.args || {};
-        response = { ok: true };
+    for (const call of calls) {
+      let args = {};
+      try { args = JSON.parse(call.function?.arguments || '{}'); } catch { /* leer lassen */ }
+      let result;
+      if (call.function?.name === 'submit_results') {
+        submitted = args;
+        result = { ok: true };
       } else {
-        try {
-          response = await runTool(call.name, call.args || {}, fetchImpl);
-          for (const it of response.items || []) if (it.identifier && !it.error) seen.add(it.identifier);
-        } catch (e) {
-          response = { error: String(e.message || e) };
-        }
+        try { result = await runTool(call.function?.name, args, fetchImpl); } catch (e) { result = { error: String(e.message || e) }; }
       }
-      return { functionResponse: { ...(call.id ? { id: call.id } : {}), name: call.name, response } };
-    }));
-    if (submitted) break;
-    contents.push({ role: 'user', parts: responses });
+      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+    }
   }
 
-  // Nur Einträge zurückgeben, die ein Werkzeug geliefert hat und die abspielbar sind.
+  // Nur Einträge zurückgeben, die es auf archive.org gibt und die abspielbar sind.
   const picks = [].concat(submitted?.results || [])
-    .filter((r, i, all) => r?.identifier && all.findIndex((x) => x.identifier === r.identifier) === i)
-    .filter((r) => seen.has(r.identifier));
-  const info = new Map((await describe(picks.map((r) => r.identifier), fetchImpl)).map((d) => [d.identifier, d]));
+    .filter((r, i, all) => r?.identifier && all.findIndex((x) => x.identifier === r.identifier) === i);
+  const info = new Map((await describe(picks.map((r) => String(r.identifier)), fetchImpl)).map((d) => [d.identifier, d]));
   const results = picks.filter((r) => info.has(r.identifier)).slice(0, 8).map((r) => {
     const d = info.get(r.identifier);
     return { id: d.identifier, title: d.title, creator: d.creator, video: d.mediatype === 'movies', reason: String(r.reason || '') };
