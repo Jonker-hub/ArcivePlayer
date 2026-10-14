@@ -1,8 +1,7 @@
-import { search, getItem, cachedItem, coverUrl, itemPageUrl } from './api.js';
+import { search, searchArchive, getItem, cachedItem, coverUrl, itemPageUrl } from './api.js';
 import { store } from './store.js';
 import { player } from './player.js';
 import { icons } from './icons.js';
-import { smartSearch } from './smart.js';
 
 // ---------- Hilfsfunktionen ----------
 
@@ -60,6 +59,7 @@ function card(it, { showProgress = false } = {}) {
       <div class="art">
         <img loading="lazy" src="${coverUrl(it.id)}" alt="" onerror="this.style.opacity=0">
         <button class="art-play" data-play="${esc(it.id)}" aria-label="Abspielen">${icons.play}</button>
+        ${it.video ? '<span class="art-badge">Video</span>' : ''}
         ${p ? `<div class="art-progress"><span style="width:${p.pct.toFixed(1)}%"></span></div>` : ''}
       </div>
       <div class="card-title">${esc(it.title)}</div>
@@ -136,7 +136,7 @@ function renderHome(isCurrent) {
 
 // ---------- Suche ----------
 
-const FILTER_LABELS = { audiobooks: 'Hörbücher', german: 'Deutsch', librivox: 'LibriVox', all: 'Alle Audios' };
+const FILTER_LABELS = { all: 'Alle', audiobooks: 'LibriVox-Hörbücher', german: 'Deutsch' };
 const CATEGORIES = [
   ['Krimi', 'subject:(krimi OR mystery OR detective)'],
   ['Märchen', 'subject:(märchen OR "fairy tales")'],
@@ -156,7 +156,7 @@ let searchState = { key: '', items: [], total: 0, page: 1 };
 
 function renderSearch(params, isCurrent) {
   const q = params.get('q') || '';
-  const f = params.get('f') || 'audiobooks';
+  const f = params.get('f') || 'all';
 
   view.innerHTML = `
     <h1 class="page-title">Suchen</h1>
@@ -165,7 +165,6 @@ function renderSearch(params, isCurrent) {
       <input type="search" name="q" value="${esc(q)}" placeholder="Titel, Autor:in oder Beschreibung …" autocomplete="off" enterkeyhint="search">
     </form>
     <div class="chips">${Object.entries(FILTER_LABELS).map(([k, l]) => `<button class="chip ${k === f ? 'on' : ''}" data-filter="${k}">${l}</button>`).join('')}</div>
-    <div id="ai-results"></div>
     <div id="results"></div>
   `;
 
@@ -174,7 +173,7 @@ function renderSearch(params, isCurrent) {
   const sync = (newQ, newF) => {
     const sp = new URLSearchParams();
     if (newQ) sp.set('q', newQ);
-    if (newF && newF !== 'audiobooks') sp.set('f', newF);
+    if (newF && newF !== 'all') sp.set('f', newF);
     const target = `#/search${sp.toString() ? `?${sp}` : ''}`;
     if (location.hash !== target) location.hash = target;
   };
@@ -184,9 +183,8 @@ function renderSearch(params, isCurrent) {
   $('.search-box', view).addEventListener('submit', (e) => { e.preventDefault(); input.blur(); clearTimeout(t); sync(input.value.trim(), f); });
   for (const c of $$('[data-filter]', view)) c.addEventListener('click', () => sync(input.value.trim(), c.dataset.filter));
   $('.side-search input').value = q;
-  if (q) runSmart(q, isCurrent);
 
-  if (!q && f === 'audiobooks') {
+  if (!q && f === 'all') {
     results.innerHTML = `
       <h2 class="section-title">Kategorien</h2>
       <div class="cats">${CATEGORIES.map(([l, query], i) => `<a class="cat c${i % 6}" href="#/search?q=${encodeURIComponent(query)}">${esc(l)}</a>`).join('')}</div>`;
@@ -205,44 +203,57 @@ function renderSearch(params, isCurrent) {
 function replaceQuery(q, f) {
   const sp = new URLSearchParams();
   if (q) sp.set('q', q);
-  if (f !== 'audiobooks') sp.set('f', f);
+  if (f !== 'all') sp.set('f', f);
   history.replaceState(null, '', `#/search${sp.toString() ? `?${sp}` : ''}`);
   const results = $('#results');
   if (!results) return;
-  $('#ai-results').innerHTML = '';
   const token = ++renderToken;
-  if (!q && f === 'audiobooks') return route();
+  if (!q && f === 'all') return route();
   searchState = { key: `${q}|${f}`, items: [], total: 0, page: 1 };
   results.innerHTML = `<div class="grid">${skeletonCards(12)}</div>`;
   loadPage(q, f, () => token === renderToken, results);
-  // Smarte Suche erst nach einer Tipp-Pause (schont Wikipedia/Open Library)
-  if (q) setTimeout(() => { if (token === renderToken) runSmart(q, () => token === renderToken); }, 700);
 }
 
 async function loadPage(q, f, isCurrent, results) {
   try {
-    const r = await search(q, { filter: f, page: searchState.page });
+    let r = await searchArchive(q, { filter: f, page: searchState.page });
+    // Seiten ohne (viele) abspielbare Einträge automatisch überspringen
+    for (let extra = 0; extra < 3 && r.hasMore && searchState.items.length + r.items.length < 12; extra++) {
+      if (!isCurrent()) return;
+      searchState.items.push(...r.items);
+      searchState.page++;
+      r = await searchArchive(q, { filter: f, page: searchState.page });
+    }
     if (!isCurrent()) return;
     searchState.items.push(...r.items);
+    searchState.items = searchState.items.filter((it, i, all) => all.findIndex((x) => x.id === it.id) === i);
     searchState.total = r.total;
+    searchState.hasMore = r.hasMore;
     showResults(results, q, f, isCurrent);
   } catch (e) {
     if (isCurrent()) results.innerHTML = `<p class="empty">${esc(e.message)}</p>`;
   }
 }
 
+// Treffer, deren Titel/Autor:in die Suchwörter enthalten, nach oben (sonst Reihenfolge von archive.org)
+function byTitleMatch(items, q) {
+  const words = String(q || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
+  if (!words.length) return items;
+  const score = (it) => { const t = `${it.title} ${it.creator}`.toLowerCase(); return words.filter((w) => t.includes(w)).length; };
+  return items.map((it, i) => ({ it, i, s: score(it) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.it);
+}
+
 function showResults(results, q, f, isCurrent) {
-  const { items, total } = searchState;
-  const withAi = !!$('#ai-results')?.childElementCount;
+  const { hasMore } = searchState;
+  const items = byTitleMatch(searchState.items, q ?? searchState.key.split('|')[0]);
   if (!items.length) {
-    results.innerHTML = `<p class="empty">${withAi ? 'Die Stichwortsuche findet zu genau diesen Wörtern nichts.' : 'Keine Treffer. Probier einen anderen Begriff oder Filter.'}</p>`;
+    results.innerHTML = `<p class="empty">Keine Treffer${f !== 'all' ? ` mit dem Filter „${FILTER_LABELS[f]}“. <a class="link" href="#/search?q=${encodeURIComponent(q)}">In allen suchen</a>` : '. Probier einen anderen Begriff.'}</p>`;
     return;
   }
   results.innerHTML = `
-    ${withAi ? '<h2 class="section-title">Alle Treffer</h2>' : ''}
-    <p class="meta-line">${total.toLocaleString('de-DE')} Treffer</p>
+    <p class="meta-line">${items.length} abspielbare Treffer</p>
     <div class="grid">${items.map((i) => card(i)).join('')}</div>
-    ${items.length < total ? '<button class="btn ghost more">Mehr laden</button>' : ''}`;
+    ${hasMore ? '<button class="btn ghost more">Mehr laden</button>' : ''}`;
   const more = $('.more', results);
   if (more) more.addEventListener('click', () => {
     more.disabled = true; more.textContent = 'Lädt …';
@@ -250,49 +261,6 @@ function showResults(results, q, f, isCurrent) {
     searchState.page++;
     loadPage(q ?? qq, f ?? ff, isCurrent || (() => true), results);
   });
-}
-
-// Smarte Suche: erkennt das gemeinte Werk (Wikipedia/Wikidata, Open Library) und sucht gezielt.
-async function runSmart(q, isCurrent) {
-  const box = $('#ai-results');
-  if (/\w:\(?/.test(q)) { box.innerHTML = ''; return; } // Feld-Suchen (Kategorien) direkt ans Archiv
-  box.innerHTML = `
-    <section class="ai-box loading">
-      <div class="ai-head">${icons.sparkle}<span>Smarte Suche</span></div>
-      <p class="ai-text">Suche passende Werke zu „${esc(q)}“ …</p>
-      <div class="ai-dots"><span></span><span></span><span></span></div>
-    </section>`;
-  try {
-    const r = await smartSearch(q);
-    if (!isCurrent() || !box.isConnected) return;
-    if (!r.results.length) { box.innerHTML = ''; refreshResultsHeading(); return; }
-    box.innerHTML = `
-      <section class="ai-box">
-        <div class="ai-head">${icons.sparkle}<span>Passende Werke</span></div>
-        ${r.hints.length ? `<p class="ai-text">Erkannt: ${r.hints.map(esc).join(' · ')}</p>` : ''}
-        <ul class="ai-list">${r.results.map((it) => `
-          <li class="ai-item">
-            <a href="#/item/${encodeURIComponent(it.id)}">
-              <img loading="lazy" src="${coverUrl(it.id)}" alt="">
-              <span class="row-text">
-                <span class="row-title">${esc(it.title)}</span>
-                <span class="row-sub">${esc([it.creator, it.year].filter(Boolean).join(' · '))}</span>
-                <span class="ai-reason">${esc(it.reason)}</span>
-              </span>
-            </a>
-            <button class="ic sm accent" data-play="${esc(it.id)}" aria-label="Abspielen">${icons.play}</button>
-          </li>`).join('')}</ul>
-      </section>`;
-    refreshResultsHeading();
-  } catch {
-    if (isCurrent() && box.isConnected) box.innerHTML = '';
-  }
-}
-
-// Überschrift „Alle Treffer“ nur, wenn darüber smarte Treffer stehen.
-function refreshResultsHeading() {
-  const results = $('#results');
-  if (results && searchState.items.length) showResults(results);
 }
 
 // ---------- Mediathek ----------
