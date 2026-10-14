@@ -254,6 +254,7 @@ function showResults(results, q, f, isCurrent) {
   const { hasMore } = searchState;
   const items = byTitleMatch(searchState.items, q ?? searchState.key.split('|')[0]);
   if (!items.length) {
+    if ($('#ai-results')?.childElementCount) { results.innerHTML = ''; return; } // KI-Box oben reicht
     results.innerHTML = `<p class="empty">Keine Treffer${f !== 'all' ? ` mit dem Filter „${FILTER_LABELS[f]}“. <a class="link" href="#/search?q=${encodeURIComponent(q)}">In allen suchen</a>` : '. Probier einen anderen Begriff.'}</p>`;
     return;
   }
