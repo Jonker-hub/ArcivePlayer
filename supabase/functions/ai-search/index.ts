@@ -1,7 +1,7 @@
 // Supabase Edge Function „ai-search“: nimmt eine Suchanfrage entgegen und lässt Google Gemini
 // (Gratis-Tarif) auf archive.org suchen. Der Gemini-Key liegt als Secret GEMINI_API_KEY im Projekt.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { aiSearch, QuotaError } from "./core.js";
+import { aiSearch, BusyError, QuotaError } from "./core.js";
 
 const ALLOWED_ORIGINS = [
   "https://jonker-hub.github.io",
@@ -52,13 +52,14 @@ Deno.serve(async (req: Request) => {
   }
   if (query.length < 2 || query.length > 500) return json({ error: "Suchbegriff zu kurz oder zu lang" }, 400, origin);
 
-  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  const apiKey = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("Google_ai_key");
   if (!apiKey) return json({ error: "KI-Suche noch nicht eingerichtet (Secret GEMINI_API_KEY fehlt)." }, 503, origin);
 
   try {
     return json(await aiSearch(apiKey, query), 200, origin);
   } catch (e) {
     if (e instanceof QuotaError) return json({ error: e.message }, 429, origin);
+    if (e instanceof BusyError) return json({ error: e.message }, 503, origin);
     return json({ error: String((e as Error).message || e) }, 500, origin);
   }
 });
