@@ -215,7 +215,8 @@ function replaceQuery(q, f) {
   searchState = { key: `${q}|${f}`, items: [], total: 0, page: 1 };
   results.innerHTML = `<div class="grid">${skeletonCards(12)}</div>`;
   loadPage(q, f, () => token === renderToken, results);
-  if (q) runSmart(q, () => token === renderToken);
+  // Smarte Suche erst nach einer Tipp-Pause (schont Wikipedia/Open Library)
+  if (q) setTimeout(() => { if (token === renderToken) runSmart(q, () => token === renderToken); }, 700);
 }
 
 async function loadPage(q, f, isCurrent, results) {

@@ -104,7 +104,19 @@ async function archiveSearch(query) {
 const first = (v) => (Array.isArray(v) ? v[0] : v);
 const asList = (v) => (Array.isArray(v) ? v : v ? [v] : []);
 
-export async function smartSearch(q) {
+const cache = new Map();
+
+export function smartSearch(q) {
+  const key = keywords(q).join(' ');
+  if (!cache.has(key)) {
+    const p = runSearch(q);
+    cache.set(key, p);
+    p.catch(() => cache.delete(key));
+  }
+  return cache.get(key);
+}
+
+async function runSearch(q) {
   const terms = keywords(q);
   if (!terms.length) return { hints: [], results: [] };
   const german = looksGerman(q);
