@@ -167,6 +167,9 @@ main {
 .c5 { background: linear-gradient(135deg, #bf5af2, #6e2196); }
 
 /* KI-Suche */
+.search-box .ai-go { display: flex; align-items: center; gap: 4px; margin-right: -6px; padding: 5px 10px; border-radius: 7px; background: var(--accent); color: #fff; font-size: 13px; font-weight: 600; flex: none; }
+.search-box .ai-go svg { width: 14px; height: 14px; color: #fff; }
+.ai-hint { margin: 10px 0 0; max-width: 640px; }
 .ai-box { margin: 0 0 26px; padding: 16px 18px; border-radius: 14px; background: linear-gradient(135deg, var(--accent-soft), transparent 75%), var(--bg-2); }
 .ai-head { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; color: var(--accent); }
 .ai-head svg { width: 18px; height: 18px; }

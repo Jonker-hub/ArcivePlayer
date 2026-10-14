@@ -2,6 +2,7 @@ import { search, searchArchive, getItem, cachedItem, coverUrl, itemPageUrl } fro
 import { store } from './store.js';
 import { player } from './player.js';
 import { icons } from './icons.js';
+import { aiAvailable, aiSearch } from './ai.js';
 
 // ---------- Hilfsfunktionen ----------
 
@@ -162,27 +163,32 @@ function renderSearch(params, isCurrent) {
     <h1 class="page-title">Suchen</h1>
     <form class="search-box" role="search">
       ${icons.search}
-      <input type="search" name="q" value="${esc(q)}" placeholder="Titel, Autor:in oder Beschreibung …" autocomplete="off" enterkeyhint="search">
+      <input type="search" name="q" value="${esc(q)}" placeholder="${aiAvailable() ? 'Was möchtest du hören?' : 'Titel, Autor:in oder Beschreibung …'}" autocomplete="off" enterkeyhint="search">
+      ${aiAvailable() ? `<button type="submit" class="ai-go" aria-label="Mit KI suchen">${icons.sparkle}<span>KI</span></button>` : ''}
     </form>
+    ${aiAvailable() && !q ? '<p class="muted ai-hint">Schreib einfach, was du suchst – z. B. „ein gutes Hörbuch zu Peter Thiels Zero to One“ – und drück Enter. Die KI sucht dann auf archive.org.</p>' : ''}
     <div class="chips">${Object.entries(FILTER_LABELS).map(([k, l]) => `<button class="chip ${k === f ? 'on' : ''}" data-filter="${k}">${l}</button>`).join('')}</div>
+    <div id="ai-results"></div>
     <div id="results"></div>
   `;
 
   const input = $('.search-box input', view);
   const results = $('#results');
-  const sync = (newQ, newF) => {
+  const sync = (newQ, newF, ai = false) => {
     const sp = new URLSearchParams();
     if (newQ) sp.set('q', newQ);
     if (newF && newF !== 'all') sp.set('f', newF);
+    if (ai && newQ) sp.set('ai', '1');
     const target = `#/search${sp.toString() ? `?${sp}` : ''}`;
     if (location.hash !== target) location.hash = target;
   };
 
   let t;
   input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => replaceQuery(input.value.trim(), f), 450); });
-  $('.search-box', view).addEventListener('submit', (e) => { e.preventDefault(); input.blur(); clearTimeout(t); sync(input.value.trim(), f); });
-  for (const c of $$('[data-filter]', view)) c.addEventListener('click', () => sync(input.value.trim(), c.dataset.filter));
+  $('.search-box', view).addEventListener('submit', (e) => { e.preventDefault(); input.blur(); clearTimeout(t); sync(input.value.trim(), f, aiAvailable()); });
+  for (const c of $$('[data-filter]', view)) c.addEventListener('click', () => sync(input.value.trim(), c.dataset.filter, params.get('ai') === '1'));
   $('.side-search input').value = q;
+  if (q && params.get('ai') === '1' && aiAvailable()) runAi(q, isCurrent);
 
   if (!q && f === 'all') {
     results.innerHTML = `
@@ -207,6 +213,7 @@ function replaceQuery(q, f) {
   history.replaceState(null, '', `#/search${sp.toString() ? `?${sp}` : ''}`);
   const results = $('#results');
   if (!results) return;
+  $('#ai-results').innerHTML = '';
   const token = ++renderToken;
   if (!q && f === 'all') return route();
   searchState = { key: `${q}|${f}`, items: [], total: 0, page: 1 };
@@ -261,6 +268,41 @@ function showResults(results, q, f, isCurrent) {
     searchState.page++;
     loadPage(q ?? qq, f ?? ff, isCurrent || (() => true), results);
   });
+}
+
+// KI-Suche: Claude Haiku sucht wie in einem KI-Chat auf archive.org und begründet die Auswahl.
+async function runAi(q, isCurrent) {
+  const box = $('#ai-results');
+  box.innerHTML = `
+    <section class="ai-box loading">
+      <div class="ai-head">${icons.sparkle}<span>KI-Suche</span></div>
+      <p class="ai-text">Die KI sucht auf archive.org nach „${esc(q)}“ … (dauert ca. 10–30 Sek.)</p>
+      <div class="ai-dots"><span></span><span></span><span></span></div>
+    </section>`;
+  try {
+    const r = await aiSearch(q);
+    if (!isCurrent() || !box.isConnected) return;
+    box.innerHTML = `
+      <section class="ai-box">
+        <div class="ai-head">${icons.sparkle}<span>KI-Treffer</span></div>
+        ${r.interpretation ? `<p class="ai-text">${esc(r.interpretation)}</p>` : ''}
+        ${r.results.length ? `<ul class="ai-list">${r.results.map((it) => `
+          <li class="ai-item">
+            <a href="#/item/${encodeURIComponent(it.id)}">
+              <img loading="lazy" src="${coverUrl(it.id)}" alt="">
+              <span class="row-text">
+                <span class="row-title">${esc(it.title)}</span>
+                <span class="row-sub">${esc([it.creator, it.video ? 'Video' : ''].filter(Boolean).join(' · '))}</span>
+                <span class="ai-reason">${esc(it.reason)}</span>
+              </span>
+            </a>
+            <button class="ic sm accent" data-play="${esc(it.id)}" aria-label="Abspielen">${icons.play}</button>
+          </li>`).join('')}</ul>` : '<p class="muted">Keine passenden Hörbücher gefunden.</p>'}
+      </section>`;
+  } catch (e) {
+    if (!isCurrent() || !box.isConnected) return;
+    box.innerHTML = `<section class="ai-box"><div class="ai-head">${icons.sparkle}<span>KI-Suche</span></div><p class="muted">${esc(e.message)}</p></section>`;
+  }
 }
 
 // ---------- Mediathek ----------
@@ -669,7 +711,7 @@ document.addEventListener('click', async (e) => {
 $('.side-search').addEventListener('submit', (e) => {
   e.preventDefault();
   const q = e.target.q.value.trim();
-  location.hash = `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`;
+  location.hash = `#/search${q ? `?q=${encodeURIComponent(q)}${aiAvailable() ? '&ai=1' : ''}` : ''}`;
 });
 
 // Tastatur: Leertaste, Pfeile, Esc
