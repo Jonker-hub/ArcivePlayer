@@ -239,7 +239,7 @@ async function loadPage(q, f, isCurrent, results) {
 function byTitleMatch(items, q) {
   const words = String(q || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
   if (!words.length) return items;
-  const score = (it) => { const t = `${it.title} ${it.creator}`.toLowerCase(); return words.filter((w) => t.includes(w)).length; };
+  const score = (it) => { const t = `${it.title} ${it.creator} ${it.id}`.toLowerCase(); return words.filter((w) => t.includes(w)).length; };
   return items.map((it, i) => ({ it, i, s: score(it) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.it);
 }
 

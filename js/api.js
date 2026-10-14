@@ -49,18 +49,69 @@ const SEARCH_FILTERS = {
 };
 const PLAYABLE = /mp3|ogg|m4a|aac|opus|flac|wave|h\.264|mpeg4/i;
 
+// Formate + Sperrstatus in Paketen abfragen (lange Anfragen lehnt archive.org ab).
 async function playableIds(ids) {
-  const p = new URLSearchParams({ q: `identifier:(${ids.map((id) => `"${id}"`).join(' OR ')})`, rows: String(ids.length), output: 'json' });
-  for (const f of ['identifier', 'format', 'access-restricted-item']) p.append('fl[]', f);
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 20) chunks.push(ids.slice(i, i + 20));
+  const results = await Promise.all(chunks.map(async (chunk) => {
+    const q = chunk.map((id) => (/^[\w.-]+$/.test(id) ? id : `"${id.replace(/"/g, '')}"`)).join(' OR ');
+    const p = new URLSearchParams({ q: `identifier:(${q})`, rows: String(chunk.length), output: 'json' });
+    for (const f of ['identifier', 'format', 'access-restricted-item']) p.append('fl[]', f);
+    const res = await fetch(`${BASE}/advancedsearch.php?${p}`);
+    const data = res.ok ? await res.json() : null;
+    if (!data?.response) return null; // Prüfung nicht möglich
+    return new Set(data.response.docs
+      .filter((d) => String(d['access-restricted-item']) !== 'true' && [].concat(d.format || []).some((f) => PLAYABLE.test(f)))
+      .map((d) => d.identifier));
+  }));
+  if (results.some((r) => r === null)) {
+    // Teilweise fehlgeschlagen: für diese Einträge grob nach Medientyp entscheiden
+    return { ok: new Set(results.filter(Boolean).flatMap((set) => [...set])), failed: chunks.filter((_, i) => !results[i]).flat() };
+  }
+  return { ok: new Set(results.flatMap((set) => [...set])), failed: [] };
+}
+
+// Viele Uploads sind schlecht beschriftet (z. B. Titel nur „Zero To One“, Autor leer); der Name steckt
+// dann oft nur in der Kennung wie „ZeroToOnePeterThielUnabridged“. Die normale Suche zerlegt die
+// Kennung nicht in Wörter, daher zusätzlich: Kennungen, die mit aufeinanderfolgenden Suchwörtern
+// beginnen (zerotoone*, zero-to-one*, zero_to_one*, peterthiel* …). Präfix-Suchen sind schnell.
+function identifierPrefixes(query) {
+  const words = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).slice(0, 8);
+  const out = new Set();
+  if (words.length === 1 && words[0].length >= 5) out.add(`${words[0]}*`);
+  for (let n = Math.min(4, words.length); n >= 2; n--) {
+    for (let i = 0; i + n <= words.length; i++) {
+      const gram = words.slice(i, i + n);
+      if (gram.join('').length < 8) continue; // kurze Präfixe wie „zeroto*“ treffen zu viel
+      for (const sep of ['', '-', '_']) out.add(`${gram.join(sep)}*`);
+    }
+  }
+  return [...out].slice(0, 36);
+}
+
+async function identifierSearch(query, filter) {
+  const prefixes = identifierPrefixes(query);
+  if (!prefixes.length) return [];
+  const parts = [`identifier:(${prefixes.join(' OR ')})`];
+  if (filter === 'audiobooks') parts.push('(collection:librivoxaudio OR collection:audio_bookspoetry)');
+  if (filter === 'german') parts.push('(language:ger OR language:German OR language:deu)');
+  const p = new URLSearchParams({ q: parts.join(' AND '), rows: '60', output: 'json' });
+  for (const f of ['identifier', 'title', 'creator', 'downloads', 'year', 'mediatype']) p.append('fl[]', f);
   const res = await fetch(`${BASE}/advancedsearch.php?${p}`);
-  if (!res.ok) throw new Error(String(res.status));
-  const docs = (await res.json()).response?.docs || [];
-  return new Set(docs
-    .filter((d) => String(d['access-restricted-item']) !== 'true' && [].concat(d.format || []).some((f) => PLAYABLE.test(f)))
-    .map((d) => d.identifier));
+  if (!res.ok) return [];
+  return ((await res.json()).response?.docs || []).map((d) => ({
+    id: d.identifier,
+    title: first(d.title) || d.identifier,
+    creator: first(d.creator) || '',
+    downloads: d.downloads || 0,
+    year: d.year || '',
+    video: d.mediatype === 'movies',
+    mediatype: d.mediatype || '',
+  }));
 }
 
 export async function searchArchive(query, { filter = 'all', page = 1, rows = 36 } = {}) {
+  const extra = page === 1 ? identifierSearch(query, filter).catch(() => []) : Promise.resolve([]);
   const params = new URLSearchParams({
     user_query: query.trim(),
     page_type: 'search_results',
@@ -79,11 +130,15 @@ export async function searchArchive(query, { filter = 'all', page = 1, rows = 36
     downloads: d.downloads || 0,
     year: d.year || '',
     video: d.mediatype === 'movies',
+    mediatype: d.mediatype || '',
   }));
+  const seen = new Set(items.map((i) => i.id));
+  items = [...(await extra).filter((i) => !seen.has(i.id)), ...items];
   if (items.length) {
     try {
-      const ok = await playableIds(items.map((i) => i.id));
-      items = items.filter((i) => ok.has(i.id));
+      const { ok, failed } = await playableIds(items.map((i) => i.id));
+      const unknown = new Set(failed);
+      items = items.filter((i) => ok.has(i.id) || (unknown.has(i.id) && /audio|movies|etree/.test(i.mediatype)));
     } catch { /* Formatprüfung fehlgeschlagen: lieber alles zeigen */ }
   }
   return { total: hits.total ?? 0, items, hasMore: page * rows < (hits.total ?? 0) };
