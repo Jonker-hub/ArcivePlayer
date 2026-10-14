@@ -19,6 +19,8 @@ class Player extends EventTarget {
     this.error = null;
     this.loading = false;
     this.finished = false;
+    this.altIndex = 0; // nächste Ausweichdatei der aktuellen Spur
+    this.wantPlay = false;
 
     const a = this.audio;
     a.addEventListener('loadedmetadata', () => this.applyPendingSeek());
@@ -36,8 +38,20 @@ class Player extends EventTarget {
     a.addEventListener('pause', () => { this.save(true); this.emit(); });
     a.addEventListener('ended', () => this.onEnded());
     a.addEventListener('error', () => {
+      // Erst die Ausweichdateien derselben Aufnahme probieren (andere MP3-Qualität, Ogg …)
+      const alts = this.track?.alts || [];
+      if (this.altIndex < alts.length) {
+        const resumeAt = this.pendingSeek ?? (a.currentTime || 0);
+        this.audio.src = trackUrl(this.item.id, alts[this.altIndex++]);
+        this.pendingSeek = resumeAt > 0 ? resumeAt : null;
+        if (this.wantPlay) this.play();
+        return;
+      }
       this.loading = false;
-      this.error = 'Diese Datei lässt sich nicht abspielen.';
+      const code = a.error?.code;
+      this.error = code === 4 ? 'Dieses Format kann dein Browser nicht abspielen.'
+        : code === 2 ? 'Netzwerkfehler beim Laden. Bitte nochmal versuchen.'
+        : 'Diese Datei lässt sich nicht abspielen.';
       this.emit();
     });
 
@@ -83,6 +97,7 @@ class Player extends EventTarget {
     this.finished = false;
 
     if (!sameTrack) {
+      this.altIndex = 0;
       this.audio.src = trackUrl(item.id, item.tracks[index].name);
       this.loading = autoplay;
     }
@@ -109,13 +124,14 @@ class Player extends EventTarget {
   play() {
     if (!this.item) return;
     if (this.finished) return this.load(this.item, 0, 0, true);
+    this.wantPlay = true;
     const p = this.audio.play();
     if (p?.catch) p.catch((err) => {
       if (err.name !== 'AbortError') { this.loading = false; this.emit(); }
     });
   }
 
-  pause() { this.audio.pause(); }
+  pause() { this.wantPlay = false; this.audio.pause(); }
 
   toggle() { this.playing ? this.pause() : this.play(); }
 

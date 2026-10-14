@@ -191,31 +191,38 @@ function rank(format) {
 }
 
 export function pickTracks(files) {
+  // Gruppieren nach Aufnahme: Ableitungen gehören zu ihrem Original, und gleich benannte Originale
+  // in mehreren Formaten (x.flac, x.mp3, x.wav) sind dieselbe Aufnahme.
   const groups = new Map();
   for (const f of files) {
     if (String(f.private) === 'true') continue; // gesperrte Dateien lassen sich nicht laden
     const r = rank(f.format || '');
     if (r < 0) continue;
-    const key = f.source === 'derivative' && f.original ? f.original : f.name;
-    const cur = groups.get(key);
-    if (!cur || r < cur.r) groups.set(key, { r, f });
+    const base = f.source === 'derivative' && f.original ? f.original : f.name;
+    const key = base.replace(/\.[^./]+$/, '');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ r, f });
   }
-  const hasAudio = [...groups.values()].some((g) => g.r < 30);
-  const tracks = [...groups.entries()].filter(([, g]) => !hasAudio || g.r < 30).map(([key, { f }]) => {
-    const orig = files.find((x) => x.name === key) || f;
+  const hasAudio = [...groups.values()].some((g) => g.some((x) => x.r < 30));
+  const tracks = [...groups.entries()].map(([key, list]) => {
+    const usable = list.filter((x) => !hasAudio || x.r < 30).sort((a, b) => a.r - b.r);
+    if (!usable.length) return null;
+    const f = usable[0].f;
+    const orig = list.map((x) => x.f).find((x) => x.source === 'original') || f;
     return {
       name: f.name,
+      alts: usable.slice(1).map((x) => x.f.name), // Ausweichdateien, falls die erste nicht abspielt
       title: cleanTitle(orig.title || f.title, f.name),
       duration: parseLength(orig.length || f.length),
       trackNo: parseInt(String(orig.track || f.track || '').split('/')[0], 10),
       sortName: key,
     };
-  });
+  }).filter(Boolean);
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
   const allNumbered = tracks.length > 1 && tracks.every((t) => Number.isFinite(t.trackNo)) &&
     new Set(tracks.map((t) => t.trackNo)).size === tracks.length;
   tracks.sort((a, b) => (allNumbered ? a.trackNo - b.trackNo : collator.compare(a.sortName, b.sortName)));
-  return tracks.map(({ name, title, duration }) => ({ name, title, duration }));
+  return tracks.map(({ name, alts, title, duration }) => ({ name, alts, title, duration }));
 }
 
 // Großes Originalbild (falls vorhanden) statt der kleinen Kachel.
