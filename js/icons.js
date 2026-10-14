@@ -1,0 +1,29 @@
+// Inline-SVG-Icons im Stil von SF Symbols.
+
+const svg = (body, vb = '0 0 24 24') =>
+  `<svg viewBox="${vb}" aria-hidden="true" focusable="false">${body}</svg>`;
+
+export const icons = {
+  play: svg('<path d="M7 4.8v14.4c0 .8.9 1.3 1.6.9l11.5-7.2c.6-.4.6-1.3 0-1.7L8.6 3.9C7.9 3.5 7 4 7 4.8z" fill="currentColor"/>'),
+  pause: svg('<rect x="6" y="4" width="4.2" height="16" rx="1.2" fill="currentColor"/><rect x="13.8" y="4" width="4.2" height="16" rx="1.2" fill="currentColor"/>'),
+  back15: svg('<path d="M12 4.5a8 8 0 1 1-7.6 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 1.5 8.5 4.5 12 7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.2" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">15</text>'),
+  fwd30: svg('<path d="M12 4.5a8 8 0 1 0 7.6 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 1.5l3.5 3L12 7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.2" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">30</text>'),
+  next: svg('<path d="M3 6.2v11.6c0 .7.8 1.1 1.4.7l8.2-5.8c.5-.4.5-1.1 0-1.4L4.4 5.5C3.8 5.1 3 5.5 3 6.2zM12 6.2v11.6c0 .7.8 1.1 1.4.7l8.2-5.8c.5-.4.5-1.1 0-1.4l-8.2-5.8c-.6-.4-1.4 0-1.4.7z" fill="currentColor"/>'),
+  prev: svg('<path d="M21 6.2v11.6c0 .7-.8 1.1-1.4.7l-8.2-5.8c-.5-.4-.5-1.1 0-1.4l8.2-5.8c.6-.4 1.4 0 1.4.7zM12 6.2v11.6c0 .7-.8 1.1-1.4.7l-8.2-5.8c-.5-.4-.5-1.1 0-1.4l8.2-5.8c.6-.4 1.4 0 1.4.7z" fill="currentColor"/>'),
+  heart: svg('<path d="M12 20.3s-7.5-4.6-9.3-9.2C1.4 7.8 3.5 4.5 6.9 4.5c2 0 3.6 1.1 5.1 3 1.5-1.9 3.1-3 5.1-3 3.4 0 5.5 3.3 4.2 6.6-1.8 4.6-9.3 9.2-9.3 9.2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>'),
+  heartFill: svg('<path d="M12 20.3s-7.5-4.6-9.3-9.2C1.4 7.8 3.5 4.5 6.9 4.5c2 0 3.6 1.1 5.1 3 1.5-1.9 3.1-3 5.1-3 3.4 0 5.5 3.3 4.2 6.6-1.8 4.6-9.3 9.2-9.3 9.2z" fill="currentColor"/>'),
+  search: svg('<circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m15.5 15.5 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'),
+  home: svg('<path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 8.6v6.8c0 .4.4.6.8.4l5.4-3.4c.3-.2.3-.6 0-.8l-5.4-3.4c-.4-.2-.8 0-.8.4z" fill="currentColor"/>'),
+  library: svg('<rect x="3.5" y="4" width="3" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="9" y="4" width="3" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14.6 5.2 2.9-.8 3.6 15-2.9.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>'),
+  chevronDown: svg('<path d="m5 9 7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'),
+  chevronRight: svg('<path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'),
+  list: svg('<circle cx="4.5" cy="6.5" r="1.4" fill="currentColor"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor"/><circle cx="4.5" cy="17.5" r="1.4" fill="currentColor"/><path d="M9 6.5h11.5M9 12h11.5M9 17.5h11.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'),
+  moon: svg('<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>'),
+  check: svg('<path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'),
+  close: svg('<path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'),
+  more: svg('<circle cx="5.5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="18.5" cy="12" r="1.8" fill="currentColor"/>'),
+  external: svg('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'),
+  sync: svg('<path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'),
+  waves: svg('<rect x="4" y="9" width="2.6" height="6" rx="1.3" fill="currentColor"><animate attributeName="height" values="6;12;6" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="9;6;9" dur="0.9s" repeatCount="indefinite"/></rect><rect x="10.7" y="5" width="2.6" height="14" rx="1.3" fill="currentColor"><animate attributeName="height" values="14;6;14" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="5;9;5" dur="0.9s" repeatCount="indefinite"/></rect><rect x="17.4" y="8" width="2.6" height="8" rx="1.3" fill="currentColor"><animate attributeName="height" values="8;14;8" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="8;5;8" dur="0.9s" repeatCount="indefinite"/></rect>'),
+  logo: svg('<defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5e6c"/><stop offset="1" stop-color="#fa233b"/></linearGradient></defs><rect width="24" height="24" rx="5.5" fill="url(#lg)"/><path d="M7 15.5v-3a5 5 0 0 1 10 0v3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><rect x="5.6" y="13.6" width="3.2" height="5" rx="1.4" fill="#fff"/><rect x="15.2" y="13.6" width="3.2" height="5" rx="1.4" fill="#fff"/>'),
+};

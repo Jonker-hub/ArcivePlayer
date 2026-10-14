@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ArcivePlayer</title>
+  <meta name="description" content="Hörbücher von archive.org suchen und hören – mit gespeichertem Hörfortschritt.">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ArcivePlayer">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="#/"><span class="brand-logo" data-icon="logo"></span>ArcivePlayer</a>
+      <form class="side-search" role="search">
+        <span data-icon="search"></span>
+        <input type="search" name="q" placeholder="Suchen" autocomplete="off" enterkeyhint="search">
+      </form>
+      <nav class="side-nav">
+        <a href="#/" data-nav="home"><span data-icon="home"></span>Jetzt hören</a>
+        <a href="#/search" data-nav="search"><span data-icon="search"></span>Suchen</a>
+        <a href="#/library" data-nav="library"><span data-icon="library"></span>Mediathek</a>
+      </nav>
+      <div class="side-foot">Inhalte: <a href="https://archive.org" target="_blank" rel="noopener">Internet Archive</a></div>
+    </aside>
+
+    <main id="view" tabindex="-1"></main>
+
+    <div class="bar" id="bar" hidden>
+      <button class="bar-info" id="bar-open" aria-label="Player öffnen">
+        <img class="bar-cover" alt="">
+        <span class="bar-text"><span class="bar-title"></span><span class="bar-sub"></span></span>
+      </button>
+      <div class="bar-center">
+        <div class="bar-controls">
+          <button class="ic desk" data-act="back" aria-label="15 Sekunden zurück" data-icon="back15"></button>
+          <button class="ic play" data-act="toggle" aria-label="Abspielen"></button>
+          <button class="ic" data-act="fwd" aria-label="30 Sekunden vor" data-icon="fwd30"></button>
+        </div>
+        <div class="bar-scrub desk">
+          <span class="t-cur">0:00</span>
+          <input type="range" class="scrub" min="0" max="1000" value="0" step="1" aria-label="Position">
+          <span class="t-rem">-0:00</span>
+        </div>
+      </div>
+      <div class="bar-right desk">
+        <button class="pill" data-act="rate" aria-label="Geschwindigkeit">1×</button>
+        <button class="ic sm" data-act="sleep" aria-label="Schlaf-Timer" data-icon="moon"></button>
+        <button class="ic sm" data-act="queue" aria-label="Kapitel" data-icon="list"></button>
+      </div>
+      <div class="bar-progress"><span></span></div>
+    </div>
+
+    <nav class="tabbar">
+      <a href="#/" data-nav="home"><span data-icon="home"></span>Jetzt hören</a>
+      <a href="#/library" data-nav="library"><span data-icon="library"></span>Mediathek</a>
+      <a href="#/search" data-nav="search"><span data-icon="search"></span>Suchen</a>
+    </nav>
+  </div>
+
+  <section class="np" id="np" aria-hidden="true">
+    <div class="np-bg"></div>
+    <div class="np-inner">
+      <header class="np-head">
+        <button class="ic" data-act="close" aria-label="Schließen" data-icon="chevronDown"></button>
+        <span class="np-grab"></span>
+        <button class="ic" data-act="openitem" aria-label="Zum Titel" data-icon="more"></button>
+      </header>
+      <div class="np-stage">
+        <img class="np-cover" alt="">
+        <ol class="np-queue" hidden></ol>
+      </div>
+      <div class="np-meta">
+        <div class="np-titles">
+          <div class="np-title"></div>
+          <div class="np-sub"></div>
+        </div>
+        <button class="ic fav" data-act="fav" aria-label="Merken"></button>
+      </div>
+      <div class="np-scrub">
+        <input type="range" class="scrub" min="0" max="1000" value="0" step="1" aria-label="Position">
+        <div class="np-times"><span class="t-cur">0:00</span><span class="t-book"></span><span class="t-rem">-0:00</span></div>
+      </div>
+      <div class="np-controls">
+        <button class="ic lg" data-act="prev" aria-label="Vorheriges Kapitel" data-icon="prev"></button>
+        <button class="ic lg" data-act="back" aria-label="15 Sekunden zurück" data-icon="back15"></button>
+        <button class="ic xl play" data-act="toggle" aria-label="Abspielen"></button>
+        <button class="ic lg" data-act="fwd" aria-label="30 Sekunden vor" data-icon="fwd30"></button>
+        <button class="ic lg" data-act="next" aria-label="Nächstes Kapitel" data-icon="next"></button>
+      </div>
+      <div class="np-foot">
+        <button class="pill" data-act="rate" aria-label="Geschwindigkeit">1×</button>
+        <button class="ic" data-act="sleep" aria-label="Schlaf-Timer" data-icon="moon"></button>
+        <button class="ic" data-act="queue" aria-label="Kapitel" data-icon="list"></button>
+      </div>
+      <div class="np-error" hidden></div>
+    </div>
+  </section>
+
+  <div class="sheet-wrap" id="sheet" hidden>
+    <div class="sheet-backdrop" data-act="sheet-close"></div>
+    <div class="sheet" role="dialog" aria-modal="true"></div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
