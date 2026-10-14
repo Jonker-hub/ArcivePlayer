@@ -2,7 +2,7 @@ import { search, getItem, cachedItem, coverUrl, itemPageUrl } from './api.js';
 import { store } from './store.js';
 import { player } from './player.js';
 import { icons } from './icons.js';
-import { aiAvailable, aiSearch } from './ai.js';
+import { smartSearch } from './smart.js';
 
 // ---------- Hilfsfunktionen ----------
 
@@ -162,8 +162,7 @@ function renderSearch(params, isCurrent) {
     <h1 class="page-title">Suchen</h1>
     <form class="search-box" role="search">
       ${icons.search}
-      <input type="search" name="q" value="${esc(q)}" placeholder="${aiAvailable() ? 'Titel, Autor:in oder Beschreibung …' : 'Titel, Autor:in, Thema …'}" autocomplete="off" enterkeyhint="search">
-      ${aiAvailable() ? `<button type="submit" class="ai-go" aria-label="Mit KI suchen">${icons.sparkle}<span>KI</span></button>` : ''}
+      <input type="search" name="q" value="${esc(q)}" placeholder="Titel, Autor:in oder Beschreibung …" autocomplete="off" enterkeyhint="search">
     </form>
     <div class="chips">${Object.entries(FILTER_LABELS).map(([k, l]) => `<button class="chip ${k === f ? 'on' : ''}" data-filter="${k}">${l}</button>`).join('')}</div>
     <div id="ai-results"></div>
@@ -172,21 +171,20 @@ function renderSearch(params, isCurrent) {
 
   const input = $('.search-box input', view);
   const results = $('#results');
-  const sync = (newQ, newF, ai = false) => {
+  const sync = (newQ, newF) => {
     const sp = new URLSearchParams();
     if (newQ) sp.set('q', newQ);
     if (newF && newF !== 'audiobooks') sp.set('f', newF);
-    if (ai && newQ) sp.set('ai', '1');
     const target = `#/search${sp.toString() ? `?${sp}` : ''}`;
     if (location.hash !== target) location.hash = target;
   };
 
   let t;
   input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => replaceQuery(input.value.trim(), f), 450); });
-  $('.search-box', view).addEventListener('submit', (e) => { e.preventDefault(); input.blur(); clearTimeout(t); sync(input.value.trim(), f, aiAvailable()); });
-  for (const c of $$('[data-filter]', view)) c.addEventListener('click', () => sync(input.value.trim(), c.dataset.filter, params.get('ai') === '1'));
+  $('.search-box', view).addEventListener('submit', (e) => { e.preventDefault(); input.blur(); clearTimeout(t); sync(input.value.trim(), f); });
+  for (const c of $$('[data-filter]', view)) c.addEventListener('click', () => sync(input.value.trim(), c.dataset.filter));
   $('.side-search input').value = q;
-  if (q && params.get('ai') === '1' && aiAvailable()) runAi(q, isCurrent);
+  if (q) runSmart(q, isCurrent);
 
   if (!q && f === 'audiobooks') {
     results.innerHTML = `
@@ -217,6 +215,7 @@ function replaceQuery(q, f) {
   searchState = { key: `${q}|${f}`, items: [], total: 0, page: 1 };
   results.innerHTML = `<div class="grid">${skeletonCards(12)}</div>`;
   loadPage(q, f, () => token === renderToken, results);
+  if (q) runSmart(q, () => token === renderToken);
 }
 
 async function loadPage(q, f, isCurrent, results) {
@@ -252,23 +251,25 @@ function showResults(results, q, f, isCurrent) {
   });
 }
 
-// KI-Suche: Claude formuliert Suchanfragen, prüft Treffer und erklärt die Auswahl.
-async function runAi(q, isCurrent) {
+// Smarte Suche: erkennt das gemeinte Werk (Wikipedia/Wikidata, Open Library) und sucht gezielt.
+async function runSmart(q, isCurrent) {
   const box = $('#ai-results');
+  if (/\w:\(?/.test(q)) { box.innerHTML = ''; return; } // Feld-Suchen (Kategorien) direkt ans Archiv
   box.innerHTML = `
     <section class="ai-box loading">
-      <div class="ai-head">${icons.sparkle}<span>KI-Suche</span></div>
-      <p class="ai-text">Claude durchsucht das Archiv nach „${esc(q)}“ …</p>
+      <div class="ai-head">${icons.sparkle}<span>Smarte Suche</span></div>
+      <p class="ai-text">Suche passende Werke zu „${esc(q)}“ …</p>
       <div class="ai-dots"><span></span><span></span><span></span></div>
     </section>`;
   try {
-    const r = await aiSearch(q);
+    const r = await smartSearch(q);
     if (!isCurrent() || !box.isConnected) return;
+    if (!r.results.length) { box.innerHTML = ''; refreshResultsHeading(); return; }
     box.innerHTML = `
       <section class="ai-box">
-        <div class="ai-head">${icons.sparkle}<span>KI-Treffer</span></div>
-        ${r.interpretation ? `<p class="ai-text">${esc(r.interpretation)}</p>` : ''}
-        ${r.results.length ? `<ul class="ai-list">${r.results.map((it) => `
+        <div class="ai-head">${icons.sparkle}<span>Passende Werke</span></div>
+        ${r.hints.length ? `<p class="ai-text">Erkannt: ${r.hints.map(esc).join(' · ')}</p>` : ''}
+        <ul class="ai-list">${r.results.map((it) => `
           <li class="ai-item">
             <a href="#/item/${encodeURIComponent(it.id)}">
               <img loading="lazy" src="${coverUrl(it.id)}" alt="">
@@ -279,12 +280,18 @@ async function runAi(q, isCurrent) {
               </span>
             </a>
             <button class="ic sm accent" data-play="${esc(it.id)}" aria-label="Abspielen">${icons.play}</button>
-          </li>`).join('')}</ul>` : '<p class="muted">Keine passenden Hörbücher gefunden.</p>'}
+          </li>`).join('')}</ul>
       </section>`;
-  } catch (e) {
-    if (!isCurrent() || !box.isConnected) return;
-    box.innerHTML = `<section class="ai-box"><div class="ai-head">${icons.sparkle}<span>KI-Suche</span></div><p class="muted">${esc(e.message)}</p></section>`;
+    refreshResultsHeading();
+  } catch {
+    if (isCurrent() && box.isConnected) box.innerHTML = '';
   }
+}
+
+// Überschrift „Alle Treffer“ nur, wenn darüber smarte Treffer stehen.
+function refreshResultsHeading() {
+  const results = $('#results');
+  if (results && searchState.items.length) showResults(results);
 }
 
 // ---------- Mediathek ----------
@@ -693,7 +700,7 @@ document.addEventListener('click', async (e) => {
 $('.side-search').addEventListener('submit', (e) => {
   e.preventDefault();
   const q = e.target.q.value.trim();
-  location.hash = `#/search${q ? `?q=${encodeURIComponent(q)}${aiAvailable() ? '&ai=1' : ''}` : ''}`;
+  location.hash = `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`;
 });
 
 // Tastatur: Leertaste, Pfeile, Esc
