@@ -55,6 +55,10 @@ Deno.serve(async (req: Request) => {
   }
   if (query.length < 2 || query.length > 300) return json({ error: "Suchbegriff zu kurz oder zu lang" }, 400, origin);
 
+  if (!Deno.env.get("ANTHROPIC_API_KEY")) {
+    return json({ error: "KI-Suche noch nicht eingerichtet (Secret ANTHROPIC_API_KEY fehlt)." }, 503, origin);
+  }
+
   try {
     const result = await aiSearch(client, query);
     return json(result, 200, origin);
