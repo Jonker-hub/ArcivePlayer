@@ -1,24 +1,25 @@
-// Geräte-Sync ohne Konto: Alle Geräte mit demselben geheimen Sync-Code teilen Hörstand und Merkliste.
-// Gespeichert wird im Supabase-Projekt; pro Eintrag gewinnt der neuere Stand (store.merge).
+// Konto + Sync: Anmeldung per E-Mail (6-stelliger Code oder Link, kein Passwort) über Supabase Auth.
+// Hörstand, Merkliste und „Gehört“ liegen am Konto; pro Eintrag gewinnt der neuere Stand.
 
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { store } from './store.js';
 
-const KEY = 'arciveplayer:sync-code';
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' },
+});
+
 const PUSH_DELAY_PLAYING_MS = 15000; // während der Wiedergabe gesammelt
 const PUSH_DELAY_IDLE_MS = 1500;     // sonst fast sofort (Pause, Springen, Merkliste)
-let isPlaying = () => false;
 const listeners = new Set();
 
+let session = null;
+let isPlaying = () => false;
 let pushTimer = null;
 let busy = false;
 let status = { state: 'off', at: 0, error: '' }; // off | ok | syncing | error
 
-function readCode() {
-  try { return localStorage.getItem(KEY) || ''; } catch { return ''; }
-}
-
-export const syncCode = () => readCode();
+export const account = () => session?.user?.email || '';
 export const syncStatus = () => status;
 export const onSyncStatus = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 
@@ -27,29 +28,23 @@ function setStatus(next) {
   for (const fn of listeners) fn(status);
 }
 
-export function newCode() {
-  const bytes = crypto.getRandomValues(new Uint8Array(20));
-  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
-  const chars = [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
-  return chars.match(/.{1,5}/g).join('-'); // z. B. k3fq9-m2xpa-77hdr-q8vwe
+// Schritt 1: Mail mit Code (und Link) anfordern. Neue Adressen bekommen automatisch ein Konto.
+export async function sendCode(email) {
+  const { error } = await supabase.auth.signInWithOtp({
+    email: email.trim(),
+    options: { emailRedirectTo: `${location.origin}${location.pathname}` },
+  });
+  if (error) throw new Error(error.message);
 }
 
-export const syncLink = (code = readCode()) => `${location.origin}${location.pathname}#/sync/${code}`;
+// Schritt 2: Code aus der Mail eingeben.
+export async function verifyCode(email, code) {
+  const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.replace(/\s/g, ''), type: 'email' });
+  if (error) throw new Error(/expired|invalid/i.test(error.message) ? 'Code ungültig oder abgelaufen' : error.message);
+}
 
-async function rpc(fn, body, keepalive = false) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
-    method: 'POST',
-    keepalive,
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Sync fehlgeschlagen (${res.status})`);
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+export async function signOut() {
+  await supabase.auth.signOut();
 }
 
 // Was synchronisiert wird (Einstellungen wie Tempo bleiben pro Gerät).
@@ -60,16 +55,17 @@ const payload = () => {
 
 // Holen, zusammenführen, zurückschreiben. Gibt true zurück, wenn sich lokal etwas geändert hat.
 export async function syncNow() {
-  const code = readCode();
-  if (!code || busy) return false;
+  if (!session || busy) return false;
   busy = true;
   setStatus({ state: 'syncing' });
   try {
-    const remote = await rpc('sync_get', { p_key: code });
+    const { data: remote, error } = await supabase.rpc('state_get');
+    if (error) throw new Error(error.message);
     const changed = remote ? store.merge(remote) : false;
     const mine = payload();
     if (!remote || JSON.stringify(remote) !== JSON.stringify(mine)) {
-      await rpc('sync_put', { p_key: code, p_state: mine });
+      const { error: putError } = await supabase.rpc('state_put', { p_state: mine });
+      if (putError) throw new Error(putError.message);
     }
     setStatus({ state: 'ok', at: Date.now(), error: '' });
     return changed;
@@ -81,21 +77,9 @@ export async function syncNow() {
   }
 }
 
-export async function connect(code) {
-  code = String(code || '').trim().toLowerCase();
-  if (code.length < 20) throw new Error('Ungültiger Sync-Code');
-  try { localStorage.setItem(KEY, code); } catch { /* ignorieren */ }
-  return syncNow();
-}
-
-export function disconnect() {
-  try { localStorage.removeItem(KEY); } catch { /* ignorieren */ }
-  setStatus({ state: 'off', at: 0, error: '' });
-}
-
 // Lokale Änderungen gesammelt hochladen.
 function schedulePush() {
-  if (!readCode()) return;
+  if (!session) return;
   const delay = isPlaying() ? PUSH_DELAY_PLAYING_MS : PUSH_DELAY_IDLE_MS;
   if (pushTimer && delay === PUSH_DELAY_PLAYING_MS) return; // beim Hören höchstens alle 15 s
   clearTimeout(pushTimer);
@@ -104,15 +88,33 @@ function schedulePush() {
 
 // Beim Schließen sofort sichern (keepalive überlebt das Entladen der Seite).
 function flush() {
-  const code = readCode();
-  if (!code) return;
+  if (!session) return;
   clearTimeout(pushTimer);
   pushTimer = null;
-  rpc('sync_put', { p_key: code, p_state: payload() }, true).catch(() => {});
+  fetch(`${SUPABASE_URL}/rest/v1/rpc/state_put`, {
+    method: 'POST',
+    keepalive: true,
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ p_state: payload() }),
+  }).catch(() => {});
 }
 
 export function startSync(onRemoteChange, playingFn) {
   if (playingFn) isPlaying = playingFn;
+  supabase.auth.onAuthStateChange((event, s) => {
+    const wasSignedIn = !!session;
+    session = s;
+    if (!s) { setStatus({ state: 'off', at: 0, error: '' }); return; }
+    if (!wasSignedIn) {
+      setStatus({ state: 'ok' });
+      // Erst nach dem Callback abgleichen (Supabase rät, im Callback keine weiteren Aufrufe abzuwarten)
+      setTimeout(() => syncNow().then((changed) => { if (changed) onRemoteChange?.(); }), 0);
+    }
+  });
   store.subscribe(schedulePush);
   window.addEventListener('pagehide', flush);
   document.addEventListener('visibilitychange', async () => {
@@ -122,6 +124,4 @@ export function startSync(onRemoteChange, playingFn) {
   setInterval(async () => {
     if (!document.hidden && await syncNow()) onRemoteChange?.();
   }, 60000);
-  if (readCode()) setStatus({ state: 'ok' });
-  return syncNow().then((changed) => { if (changed) onRemoteChange?.(); });
 }

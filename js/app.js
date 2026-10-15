@@ -3,7 +3,7 @@ import { store } from './store.js';
 import { player } from './player.js';
 import { icons } from './icons.js';
 import { aiAvailable, aiSearch } from './ai.js';
-import { syncCode, syncStatus, onSyncStatus, newCode, syncLink, connect, disconnect, syncNow, startSync } from './sync.js';
+import { account, syncStatus, onSyncStatus, sendCode, verifyCode, signOut, syncNow, startSync } from './sync.js';
 
 // ---------- Hilfsfunktionen ----------
 
@@ -95,13 +95,6 @@ function route() {
   let nav = 'home';
   if (parts[0] === 'search') { nav = 'search'; renderSearch(params, isCurrent); }
   else if (parts[0] === 'library') { nav = 'library'; renderLibrary(params); }
-  else if (parts[0] === 'sync' && parts[1]) {
-    const code = decodeURIComponent(parts[1]);
-    history.replaceState(null, '', '#/library');
-    connect(code).then(() => { toast('Gerät verbunden – Hörstand wird abgeglichen'); afterRemoteChange(); })
-      .catch((e) => toast(e.message));
-    return route();
-  }
   else if (parts[0] === 'item' && parts[1]) { nav = ''; renderItem(decodeURIComponent(parts[1]), isCurrent); }
   else renderHome(isCurrent);
 
@@ -339,31 +332,40 @@ function renderLibrary(params) {
   list.slice(0, 10).forEach((p) => getItem(p.id).catch(() => {}));
 }
 
+let loginEmail = '';
+
 function syncBox() {
-  const code = syncCode();
-  if (!code) {
+  const email = account();
+  if (!email) {
+    if (loginEmail) {
+      return `
+        <h2 class="section-title">Code eingeben</h2>
+        <p class="muted">Wir haben dir eine Mail an <b>${esc(loginEmail)}</b> geschickt. Gib den Code daraus ein (oder tippe in Safari auf den Link in der Mail).</p>
+        <form class="login-form" data-form="code">
+          <input class="field" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required>
+          <button class="btn" type="submit">Anmelden</button>
+        </form>
+        <div class="btn-row"><button class="btn ghost" data-act="login-back">Andere E-Mail</button></div>`;
+    }
     return `
-      <h2 class="section-title">Geräte verbinden</h2>
-      <p class="muted">Hörstand, Merkliste und „Gehört“ auf iPhone, iPad und Mac gleich halten – ohne Konto. Auf einem Gerät einrichten, dann den Link auf den anderen Geräten öffnen.</p>
-      <div class="btn-row">
-        <button class="btn" data-act="sync-setup">Sync einrichten</button>
-        <button class="btn ghost" data-act="sync-join">Code eingeben</button>
-      </div>`;
+      <h2 class="section-title">Anmelden</h2>
+      <p class="muted">Mit deiner E-Mail-Adresse anmelden – ohne Passwort. Dann sind Hörstand, Merkliste und „Gehört“ auf all deinen Geräten gleich.</p>
+      <form class="login-form" data-form="email">
+        <input class="field" name="email" type="email" autocomplete="email" placeholder="du@beispiel.de" required>
+        <button class="btn" type="submit">Code senden</button>
+      </form>`;
   }
   const st = syncStatus();
-  const when = st.state === 'error' ? `Fehler: ${esc(st.error)}`
+  const when = st.state === 'error' ? `Fehler beim Abgleich: ${esc(st.error)}`
     : st.state === 'syncing' ? 'Wird abgeglichen'
-    : st.at ? `Zuletzt abgeglichen ${new Date(st.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr` : 'Verbunden';
+    : st.at ? `Zuletzt abgeglichen ${new Date(st.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr` : 'Angemeldet';
   return `
-    <h2 class="section-title sync-title">${icons.check}<span>Geräte verbunden</span></h2>
-    <p class="muted">${when}. Öffne diesen Link auf deinen anderen Geräten, um sie zu verbinden:</p>
-    <p class="sync-code">${esc(code)}</p>
+    <h2 class="section-title sync-title">${icons.check}<span>Angemeldet</span></h2>
+    <p class="muted">${esc(email)} · ${when}</p>
     <div class="btn-row">
-      <button class="btn" data-act="sync-share">Link teilen</button>
       <button class="btn ghost" data-act="sync-now">Jetzt abgleichen</button>
-      <button class="btn ghost" data-act="sync-off">Trennen</button>
-    </div>
-    <p class="muted small">Wer den Code kennt, sieht deinen Hörstand. Teile ihn nur mit deinen eigenen Geräten.</p>`;
+      <button class="btn ghost" data-act="sign-out">Abmelden</button>
+    </div>`;
 }
 
 function libRow(p, tab) {
@@ -711,43 +713,42 @@ document.addEventListener('click', async (e) => {
         active: v === null ? !player.sleep : v === 'track' ? !!player.sleep?.endOfTrack : false,
       })), (v) => { player.setSleep(v); toast(v ? 'Schlaf-Timer gestellt' : 'Schlaf-Timer aus'); });
     case 'sheet-close': return closeSheet();
-    case 'sync-setup': {
-      try { await connect(newCode()); toast('Sync eingerichtet – jetzt den Link auf deinen anderen Geräten öffnen.'); }
-      catch (e) { toast(e.message); }
+    case 'login-back':
+      loginEmail = '';
       return refreshSyncBox();
-    }
-    case 'sync-share': {
-      const url = syncLink();
-      try {
-        if (navigator.share) await navigator.share({ title: 'ArcivePlayer verbinden', url });
-        else { await navigator.clipboard.writeText(url); toast('Link kopiert'); }
-      } catch (e) {
-        if (e.name !== 'AbortError') {
-          openSheet(`<div class="sheet-title">Link zum Verbinden</div><textarea class="io" readonly>${esc(url)}</textarea><button class="sheet-cancel" data-act="sheet-close">Fertig</button>`);
-          $('.sheet textarea').select();
-        }
-      }
-      return;
-    }
-    case 'sync-join':
-      openSheet(`<div class="sheet-title">Sync-Code eingeben</div><textarea class="io" placeholder="z. B. k3fq9-m2xpa-77hdr-…"></textarea>
-        <button class="btn wide" data-act="do-join">Verbinden</button><button class="sheet-cancel" data-act="sheet-close">Abbrechen</button>`);
-      return;
-    case 'do-join': {
-      const raw = $('.sheet textarea').value.trim();
-      const code = raw.includes('#/sync/') ? raw.split('#/sync/')[1] : raw;
-      try { await connect(code); closeSheet(); toast('Verbunden'); afterRemoteChange(); }
-      catch (e) { toast(e.message); }
-      return refreshSyncBox();
-    }
     case 'sync-now':
       if (await syncNow()) afterRemoteChange();
       return refreshSyncBox();
-    case 'sync-off':
-      disconnect();
-      toast('Dieses Gerät ist nicht mehr verbunden');
+    case 'sign-out':
+      await signOut();
+      toast('Abgemeldet – der Hörstand bleibt auf diesem Gerät erhalten');
       return refreshSyncBox();
   }
+});
+
+// Anmeldung: E-Mail senden, dann Code prüfen
+document.addEventListener('submit', async (e) => {
+  const form = e.target.closest('[data-form]');
+  if (!form) return;
+  e.preventDefault();
+  const btn = form.querySelector('button');
+  btn.disabled = true;
+  try {
+    if (form.dataset.form === 'email') {
+      const email = form.email.value.trim();
+      await sendCode(email);
+      loginEmail = email;
+      toast('Mail ist unterwegs');
+    } else {
+      await verifyCode(loginEmail, form.code.value);
+      loginEmail = '';
+      toast('Angemeldet – Hörstand wird abgeglichen');
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+  btn.disabled = false;
+  refreshSyncBox();
 });
 
 // Sidebar-Suche (Desktop)
