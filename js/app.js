@@ -3,6 +3,7 @@ import { store } from './store.js';
 import { player } from './player.js';
 import { icons } from './icons.js';
 import { aiAvailable, aiSearch } from './ai.js';
+import { syncCode, syncStatus, onSyncStatus, newCode, syncLink, connect, disconnect, syncNow, startSync } from './sync.js';
 
 // ---------- Hilfsfunktionen ----------
 
@@ -94,6 +95,13 @@ function route() {
   let nav = 'home';
   if (parts[0] === 'search') { nav = 'search'; renderSearch(params, isCurrent); }
   else if (parts[0] === 'library') { nav = 'library'; renderLibrary(params); }
+  else if (parts[0] === 'sync' && parts[1]) {
+    const code = decodeURIComponent(parts[1]);
+    history.replaceState(null, '', '#/library');
+    connect(code).then(() => { toast('Gerät verbunden – Hörstand wird abgeglichen'); afterRemoteChange(); })
+      .catch((e) => toast(e.message));
+    return route();
+  }
   else if (parts[0] === 'item' && parts[1]) { nav = ''; renderItem(decodeURIComponent(parts[1]), isCurrent); }
   else renderHome(isCurrent);
 
@@ -327,15 +335,35 @@ function renderLibrary(params) {
       favs: 'Tippe bei einem Titel auf das Herz, um ihn dir zu merken.',
       done: 'Fertig gehörte Titel erscheinen hier.',
     }[tab]}</p>`}
-    <section class="section data-box">
-      <h2 class="section-title">Daten auf ein anderes Gerät übertragen</h2>
-      <p class="muted">Der Hörstand wird in diesem Browser gespeichert. Mit „Exportieren“ kopierst du ihn, mit „Importieren“ führst du ihn auf einem anderen Gerät zusammen – der jeweils neuere Stand gewinnt.</p>
-      <div class="btn-row">
-        <button class="btn ghost" data-act="export">Exportieren</button>
-        <button class="btn ghost" data-act="import">Importieren</button>
-      </div>
-    </section>`;
+    <section class="section data-box" id="sync-box">${syncBox()}</section>`;
   list.slice(0, 10).forEach((p) => getItem(p.id).catch(() => {}));
+}
+
+function syncBox() {
+  const code = syncCode();
+  if (!code) {
+    return `
+      <h2 class="section-title">Geräte verbinden</h2>
+      <p class="muted">Hörstand, Merkliste und „Gehört“ auf iPhone, iPad und Mac gleich halten – ohne Konto. Auf einem Gerät einrichten, dann den Link auf den anderen Geräten öffnen.</p>
+      <div class="btn-row">
+        <button class="btn" data-act="sync-setup">Sync einrichten</button>
+        <button class="btn ghost" data-act="sync-join">Code eingeben</button>
+      </div>`;
+  }
+  const st = syncStatus();
+  const when = st.state === 'error' ? `Fehler: ${esc(st.error)}`
+    : st.state === 'syncing' ? 'Wird abgeglichen'
+    : st.at ? `Zuletzt abgeglichen ${new Date(st.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr` : 'Verbunden';
+  return `
+    <h2 class="section-title sync-title">${icons.check}<span>Geräte verbunden</span></h2>
+    <p class="muted">${when}. Öffne diesen Link auf deinen anderen Geräten, um sie zu verbinden:</p>
+    <p class="sync-code">${esc(code)}</p>
+    <div class="btn-row">
+      <button class="btn" data-act="sync-share">Link teilen</button>
+      <button class="btn ghost" data-act="sync-now">Jetzt abgleichen</button>
+      <button class="btn ghost" data-act="sync-off">Trennen</button>
+    </div>
+    <p class="muted small">Wer den Code kennt, sieht deinen Hörstand. Teile ihn nur mit deinen eigenen Geräten.</p>`;
 }
 
 function libRow(p, tab) {
@@ -683,28 +711,42 @@ document.addEventListener('click', async (e) => {
         active: v === null ? !player.sleep : v === 'track' ? !!player.sleep?.endOfTrack : false,
       })), (v) => { player.setSleep(v); toast(v ? 'Schlaf-Timer gestellt' : 'Schlaf-Timer aus'); });
     case 'sheet-close': return closeSheet();
-    case 'export': {
-      const data = store.exportJSON();
-      try { await navigator.clipboard.writeText(data); toast('Hörstand kopiert – auf dem anderen Gerät unter „Importieren“ einfügen.'); }
-      catch {
-        openSheet(`<div class="sheet-title">Hörstand exportieren</div><textarea class="io" readonly>${esc(data)}</textarea><button class="sheet-cancel" data-act="sheet-close">Fertig</button>`);
-        $('.sheet textarea').select();
+    case 'sync-setup': {
+      try { await connect(newCode()); toast('Sync eingerichtet – jetzt den Link auf deinen anderen Geräten öffnen.'); }
+      catch (e) { toast(e.message); }
+      return refreshSyncBox();
+    }
+    case 'sync-share': {
+      const url = syncLink();
+      try {
+        if (navigator.share) await navigator.share({ title: 'ArcivePlayer verbinden', url });
+        else { await navigator.clipboard.writeText(url); toast('Link kopiert'); }
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          openSheet(`<div class="sheet-title">Link zum Verbinden</div><textarea class="io" readonly>${esc(url)}</textarea><button class="sheet-cancel" data-act="sheet-close">Fertig</button>`);
+          $('.sheet textarea').select();
+        }
       }
       return;
     }
-    case 'import':
-      openSheet(`<div class="sheet-title">Hörstand importieren</div><textarea class="io" placeholder="Exportierten Text hier einfügen"></textarea>
-        <button class="btn wide" data-act="do-import">Zusammenführen</button><button class="sheet-cancel" data-act="sheet-close">Abbrechen</button>`);
+    case 'sync-join':
+      openSheet(`<div class="sheet-title">Sync-Code eingeben</div><textarea class="io" placeholder="z. B. k3fq9-m2xpa-77hdr-…"></textarea>
+        <button class="btn wide" data-act="do-join">Verbinden</button><button class="sheet-cancel" data-act="sheet-close">Abbrechen</button>`);
       return;
-    case 'do-import': {
-      try {
-        const changed = store.merge(JSON.parse($('.sheet textarea').value));
-        toast(changed ? 'Hörstand übernommen' : 'Nichts Neueres gefunden');
-        closeSheet();
-        route();
-      } catch { toast('Das ist kein gültiger Export.'); }
-      return;
+    case 'do-join': {
+      const raw = $('.sheet textarea').value.trim();
+      const code = raw.includes('#/sync/') ? raw.split('#/sync/')[1] : raw;
+      try { await connect(code); closeSheet(); toast('Verbunden'); afterRemoteChange(); }
+      catch (e) { toast(e.message); }
+      return refreshSyncBox();
     }
+    case 'sync-now':
+      if (await syncNow()) afterRemoteChange();
+      return refreshSyncBox();
+    case 'sync-off':
+      disconnect();
+      toast('Dieses Gerät ist nicht mehr verbunden');
+      return refreshSyncBox();
   }
 });
 
@@ -734,6 +776,27 @@ store.subscribe(() => { updateItemView(); if (player.item) updatePlayerUI(); });
 hydrateIcons();
 route();
 
+// Sync-Anzeige in der Mediathek aktuell halten
+function refreshSyncBox() {
+  const box = $('#sync-box');
+  if (box) { box.innerHTML = syncBox(); hydrateIcons(box); }
+}
+onSyncStatus(refreshSyncBox);
+
+// Ein anderes Gerät hat Neueres geliefert: Ansicht auffrischen und – wenn gerade nichts läuft –
+// den Player auf den neuesten Stand setzen (z. B. auf dem iPad dort weiter, wo das iPhone aufgehört hat).
+function afterRemoteChange() {
+  if (!player.playing) {
+    const id = store.get().lastId;
+    const p = id && store.progress(id);
+    if (p && !p.removed) {
+      const differs = player.item?.id !== id || player.index !== (p.track || 0) || Math.abs(player.currentTime - (p.time || 0)) > 2;
+      if (differs) getItem(id).then((item) => { if (!player.playing) player.resume(item, false); }).catch(() => {});
+    }
+  }
+  if (/^#\/(library|item\/|$)|^$|^#\/?$/.test(location.hash)) route();
+}
+
 // Letzten Titel wiederherstellen – pausiert, exakt an der gespeicherten Stelle.
 const lastId = store.get().lastId;
 if (lastId && !store.progress(lastId)?.removed) {
@@ -743,3 +806,5 @@ if (lastId && !store.progress(lastId)?.removed) {
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+startSync(afterRemoteChange, () => player.playing);

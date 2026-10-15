@@ -38,9 +38,13 @@ export const store = {
 
   saveProgress(id, data) {
     const prev = state.progress[id] || { doneTracks: {} };
-    state.progress[id] = { ...prev, ...data, id, updatedAt: Date.now() };
-    state.lastId = id;
-    state.lastAt = Date.now();
+    // Nur echte Änderungen bekommen einen neuen Zeitstempel – sonst würde das bloße Öffnen eines
+    // Titels auf einem Gerät den neueren Stand eines anderen Geräts beim Sync „überholen“.
+    const same = !prev.removed && prev.trackName === data.trackName && !!prev.finished === !!data.finished &&
+      Math.abs((prev.time || 0) - (data.time || 0)) < 1;
+    const now = Date.now();
+    state.progress[id] = { ...prev, ...data, id, updatedAt: same && prev.updatedAt ? prev.updatedAt : now };
+    if (!same || state.lastId !== id) { state.lastId = id; state.lastAt = now; }
     persist();
   },
 
