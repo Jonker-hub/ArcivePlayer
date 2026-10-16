@@ -37,10 +37,24 @@ export async function sendCode(email) {
   if (error) throw new Error(error.message);
 }
 
-// Schritt 2: Code aus der Mail eingeben.
-export async function verifyCode(email, code) {
-  const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.replace(/\s/g, ''), type: 'email' });
-  if (error) throw new Error(/expired|invalid/i.test(error.message) ? 'Code ungültig oder abgelaufen' : error.message);
+// Schritt 2: Code aus der Mail eingeben – oder den kopierten Anmelde-Link einfügen
+// (nötig in der Home-Bildschirm-App, weil iOS Mail-Links in Safari statt in der App öffnet).
+export async function verifyCode(email, input) {
+  const text = String(input || '').trim();
+  let result;
+  const link = text.match(/https?:\/\/\S+/)?.[0];
+  if (link) {
+    const url = new URL(link);
+    const tokenHash = url.searchParams.get('token') || url.searchParams.get('token_hash');
+    if (!tokenHash) throw new Error('In diesem Link steckt kein Anmeldeschlüssel');
+    const type = url.searchParams.get('type') || 'email';
+    result = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: type === 'magiclink' ? 'email' : type });
+  } else {
+    result = await supabase.auth.verifyOtp({ email: email.trim(), token: text.replace(/\s/g, ''), type: 'email' });
+  }
+  if (result.error) {
+    throw new Error(/expired|invalid|not found/i.test(result.error.message) ? 'Link bzw. Code ungültig oder abgelaufen – bitte neu anfordern' : result.error.message);
+  }
 }
 
 export async function signOut() {

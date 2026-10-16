@@ -1,6 +1,6 @@
 // Offline-Hülle: App-Dateien zwischenspeichern, neu laden sobald online (network-first).
 // Audio und archive.org-Anfragen gehen immer direkt ins Netz.
-const CACHE = 'arciveplayer-v8';
+const CACHE = 'arciveplayer-v9';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/api.js', 'js/store.js', 'js/player.js', 'js/icons.js', 'js/ai.js', 'js/config.js', 'js/sync.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

@@ -339,10 +339,11 @@ function syncBox() {
   if (!email) {
     if (loginEmail) {
       return `
-        <h2 class="section-title">Code eingeben</h2>
-        <p class="muted">Wir haben dir eine Mail an <b>${esc(loginEmail)}</b> geschickt. Gib den Code daraus ein (oder tippe in Safari auf den Link in der Mail).</p>
+        <h2 class="section-title">Mail ist unterwegs</h2>
+        <p class="muted">An <b>${esc(loginEmail)}</b>. Im Browser: in der Mail auf „Sign in“ tippen.<br>
+        In der App vom Home-Bildschirm: den Link in der Mail lange drücken → „Link kopieren“ → hier einfügen.</p>
         <form class="login-form" data-form="code">
-          <input class="field" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required>
+          <input class="field" name="code" autocomplete="one-time-code" placeholder="Link aus der Mail einfügen" required>
           <button class="btn" type="submit">Anmelden</button>
         </form>
         <div class="btn-row"><button class="btn ghost" data-act="login-back">Andere E-Mail</button></div>`;
@@ -352,7 +353,7 @@ function syncBox() {
       <p class="muted">Mit deiner E-Mail-Adresse anmelden – ohne Passwort. Dann sind Hörstand, Merkliste und „Gehört“ auf all deinen Geräten gleich.</p>
       <form class="login-form" data-form="email">
         <input class="field" name="email" type="email" autocomplete="email" placeholder="du@beispiel.de" required>
-        <button class="btn" type="submit">Code senden</button>
+        <button class="btn" type="submit">Anmelde-Link senden</button>
       </form>`;
   }
   const st = syncStatus();
