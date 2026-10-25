@@ -461,3 +461,10 @@ main {
   .segmented a { padding: 7px 4px; font-size: 12.5px; gap: 4px; }
   .segmented a span { font-size: 11px; }
 }
+
+/* Video im Vollbild-Player */
+.np-stage video { width: 100%; max-height: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; object-fit: contain; box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
+.np.is-video .np-cover { display: none; }
+.np.show-queue .np-stage video { display: none; }
+.np-fs { display: none !important; }
+.np.is-video .np-fs { display: inline-grid !important; }

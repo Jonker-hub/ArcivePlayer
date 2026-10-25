@@ -1,15 +1,21 @@
-// Audio-Engine: ein <audio>-Element, Fortschritt speichern, exakt wiederherstellen.
+// Wiedergabe-Engine: <audio> für Hörbücher, <video> für Video-Einträge (Bild im Vollbild-Player).
+// Fortschritt speichern, exakt wiederherstellen.
 
 import { trackUrl, coverUrl } from './api.js';
 import { store } from './store.js';
 
 const SAVE_EVERY_MS = 4000;
+const isVideoFile = (name) => /\.(mp4|m4v|webm|ogv|mov)$/i.test(name || '');
 
 class Player extends EventTarget {
   constructor() {
     super();
-    this.audio = new Audio();
-    this.audio.preload = 'metadata';
+    this.audioEl = new Audio();
+    this.videoEl = document.createElement('video');
+    this.videoEl.playsInline = true; // iOS: im Player statt sofort Vollbild
+    this.videoEl.setAttribute('playsinline', '');
+    for (const el of [this.audioEl, this.videoEl]) el.preload = 'metadata';
+    this.audio = this.audioEl; // das aktive Element (Name aus Kompatibilität)
     this.item = null;
     this.index = 0;
     this.pendingSeek = null; // Zielposition, solange das Audio noch nicht bereit ist
@@ -22,22 +28,26 @@ class Player extends EventTarget {
     this.altIndex = 0; // nächste Ausweichdatei der aktuellen Spur
     this.wantPlay = false;
 
-    const a = this.audio;
-    a.addEventListener('loadedmetadata', () => this.applyPendingSeek());
-    a.addEventListener('canplay', () => { this.loading = false; this.applyPendingSeek(); this.emit(); });
-    a.addEventListener('waiting', () => { this.loading = true; this.emit(); });
-    a.addEventListener('playing', () => { this.loading = false; this.error = null; this.emit(); });
-    a.addEventListener('seeked', () => { this.confirmSeek(); this.save(true); });
-    a.addEventListener('timeupdate', () => {
+    // Ereignisse beider Elemente; das jeweils inaktive wird ignoriert
+    const on = (type, fn) => {
+      for (const el of [this.audioEl, this.videoEl]) el.addEventListener(type, (e) => { if (e.target === this.audio) fn(); });
+    };
+    on('loadedmetadata', () => this.applyPendingSeek());
+    on('canplay', () => { this.loading = false; this.applyPendingSeek(); this.emit(); });
+    on('waiting', () => { this.loading = true; this.emit(); });
+    on('playing', () => { this.loading = false; this.error = null; this.emit(); });
+    on('seeked', () => { this.confirmSeek(); this.save(true); });
+    on('timeupdate', () => {
       this.confirmSeek();
       if (Date.now() - this.lastSave > SAVE_EVERY_MS) this.save();
       this.updatePositionState();
       this.emit('time');
     });
-    a.addEventListener('play', () => { this.applyRate(); this.emit(); });
-    a.addEventListener('pause', () => { this.save(true); this.emit(); });
-    a.addEventListener('ended', () => this.onEnded());
-    a.addEventListener('error', () => {
+    on('play', () => { this.applyRate(); this.emit(); });
+    on('pause', () => { this.save(true); this.emit(); });
+    on('ended', () => this.onEnded());
+    on('error', () => {
+      const a = this.audio;
       // Erst die Ausweichdateien derselben Aufnahme probieren (andere MP3-Qualität, Ogg …)
       const alts = this.track?.alts || [];
       if (this.altIndex < alts.length) {
@@ -73,6 +83,10 @@ class Player extends EventTarget {
     return this.item?.tracks[this.index] || null;
   }
 
+  get isVideo() {
+    return this.audio === this.videoEl;
+  }
+
   get playing() {
     return !this.audio.paused && !this.audio.ended;
   }
@@ -99,6 +113,13 @@ class Player extends EventTarget {
 
     if (!sameTrack) {
       this.altIndex = 0;
+      const wanted = isVideoFile(item.tracks[index].name) ? this.videoEl : this.audioEl;
+      if (wanted !== this.audio) { // zwischen Audio und Video wechseln
+        this.audio.pause();
+        this.audio.removeAttribute('src');
+        this.audio.load();
+        this.audio = wanted;
+      }
       this.audio.src = trackUrl(item.id, item.tracks[index].name);
       this.loading = autoplay;
     }

@@ -518,6 +518,7 @@ let lastError = null;
 function updatePlayerUI() {
   const { item, track } = player;
   document.body.classList.toggle('has-player', !!item);
+  showVideo();
   np.classList.toggle('playing-now', player.playing);
   bar.hidden = !item;
   if (!item) return;
@@ -611,6 +612,21 @@ for (const s of $$('.scrub')) {
     scrubbing = false;
     player.seek((s.value / 1000) * player.duration);
   });
+}
+
+// Video-Einträge: Bild statt Cover im Vollbild-Player
+let videoOpenedFor = '';
+function showVideo() {
+  const stage = $('.np-stage');
+  np.classList.toggle('is-video', player.isVideo);
+  if (!player.isVideo) return;
+  if (player.videoEl.parentNode !== stage) stage.prepend(player.videoEl);
+  // Beim Start eines Videos den Player einmal aufklappen, damit man das Bild sieht
+  const key = `${player.item?.id}|${player.index}`;
+  if (player.playing && videoOpenedFor !== key) {
+    videoOpenedFor = key;
+    if (!np.classList.contains('open')) openNowPlaying();
+  }
 }
 
 function openNowPlaying() {
@@ -731,6 +747,12 @@ document.addEventListener('click', async (e) => {
     case 'next': return player.next();
     case 'prev': return player.prev();
     case 'close': return closeNowPlaying();
+    case 'fullscreen': {
+      const v = player.videoEl;
+      if (v.requestFullscreen) v.requestFullscreen().catch(() => v.webkitEnterFullscreen?.());
+      else v.webkitEnterFullscreen?.(); // iPhone
+      return;
+    }
     case 'openitem':
       if (player.item) { closeNowPlaying(); location.hash = `#/item/${encodeURIComponent(player.item.id)}`; }
       return;

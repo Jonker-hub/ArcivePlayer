@@ -36,10 +36,13 @@ function mimeFor(name, header) {
   return { mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4', mp4: 'video/mp4', flac: 'audio/flac', wav: 'audio/wav', opus: 'audio/ogg' }[ext] || 'application/octet-stream';
 }
 
+// Kleinste MP3; bei Videos die kleinste Videodatei (spart Speicher und Daten)
 const pickVariant = (track) => {
-  const mp3s = (track.variants || []).filter((v) => v.mp3 && v.size);
-  if (!mp3s.length) return { name: track.name, size: (track.variants || [])[0]?.size || 0 };
-  return mp3s.reduce((a, b) => (b.size < a.size ? b : a));
+  const all = (track.variants || []).filter((v) => v.size);
+  const mp3s = all.filter((v) => v.mp3);
+  const pool = mp3s.length ? mp3s : all;
+  if (!pool.length) return { name: track.name, size: 0 };
+  return pool.reduce((a, b) => (b.size < a.size ? b : a));
 };
 
 export async function download(item) {

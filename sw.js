@@ -2,7 +2,7 @@
 // - App-Dateien: network-first, offline aus dem Cache (die App startet auch ohne Netz)
 // - Bibliotheken vom CDN (Supabase): einmal laden, dann aus dem Cache
 // - Heruntergeladene Hörbücher: direkt vom Gerät, inkl. Teilbereichen (Range), die Safari zum Abspielen braucht
-const CACHE = 'arciveplayer-v10';
+const CACHE = 'arciveplayer-v11';
 const CDN_CACHE = 'arciveplayer-cdn';
 const DOWNLOAD_CACHE = 'arciveplayer-downloads'; // wird nie automatisch gelöscht
 const KEEP = [CACHE, CDN_CACHE, DOWNLOAD_CACHE];
