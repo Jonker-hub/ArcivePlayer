@@ -49,7 +49,8 @@ class Player extends EventTarget {
       }
       this.loading = false;
       const code = a.error?.code;
-      this.error = code === 4 ? 'Dieses Format kann dein Browser nicht abspielen.'
+      this.error = !navigator.onLine ? 'Offline – dieser Titel ist nicht heruntergeladen.'
+        : code === 4 ? 'Dieses Format kann dein Browser nicht abspielen.'
         : code === 2 ? 'Netzwerkfehler beim Laden. Bitte nochmal versuchen.'
         : 'Diese Datei lässt sich nicht abspielen.';
       this.emit();

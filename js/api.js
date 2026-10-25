@@ -144,6 +144,12 @@ export async function searchArchive(query, { filter = 'all', page = 1, rows = 36
   return { total: hits.total ?? 0, items, hasMore: page * rows < (hits.total ?? 0) };
 }
 
+// Titeldaten heruntergeladener Einträge (gepflegt von offline.js)
+export const DOWNLOADS_KEY = 'arciveplayer:downloads';
+function downloadedItem(id) {
+  try { return JSON.parse(localStorage.getItem(DOWNLOADS_KEY) || '{}')[id]?.item || null; } catch { return null; }
+}
+
 const itemCache = new Map();
 const resolved = new Map();
 
@@ -153,7 +159,15 @@ export const cachedItem = (id) => resolved.get(id) || null;
 export async function getItem(id) {
   if (itemCache.has(id)) return itemCache.get(id);
   const promise = (async () => {
-    const res = await fetch(`${BASE}/metadata/${encodeURIComponent(id)}`);
+    let res;
+    try {
+      res = await fetch(`${BASE}/metadata/${encodeURIComponent(id)}`);
+    } catch (e) {
+      // Offline: heruntergeladene Titel aus dem Download-Verzeichnis nehmen
+      const saved = downloadedItem(id);
+      if (saved) return saved;
+      throw new Error('Keine Internetverbindung – dieser Titel ist nicht heruntergeladen.');
+    }
     if (!res.ok) throw new Error(`Titel konnte nicht geladen werden (${res.status})`);
     const data = await res.json();
     if (!data.metadata) throw new Error('Diesen Titel gibt es auf archive.org nicht (mehr).');
@@ -212,6 +226,8 @@ export function pickTracks(files) {
     return {
       name: f.name,
       alts: usable.slice(1).map((x) => x.f.name), // Ausweichdateien, falls die erste nicht abspielt
+      // alle Varianten mit Größe – für Downloads wird die kleinste MP3 genommen
+      variants: usable.map((x) => ({ name: x.f.name, size: +x.f.size || 0, mp3: /mp3/i.test(x.f.format || '') })),
       title: cleanTitle(orig.title || f.title, f.name),
       duration: parseLength(orig.length || f.length),
       trackNo: parseInt(String(orig.track || f.track || '').split('/')[0], 10),
@@ -222,7 +238,7 @@ export function pickTracks(files) {
   const allNumbered = tracks.length > 1 && tracks.every((t) => Number.isFinite(t.trackNo)) &&
     new Set(tracks.map((t) => t.trackNo)).size === tracks.length;
   tracks.sort((a, b) => (allNumbered ? a.trackNo - b.trackNo : collator.compare(a.sortName, b.sortName)));
-  return tracks.map(({ name, alts, title, duration }) => ({ name, alts, title, duration }));
+  return tracks.map(({ name, alts, variants, title, duration }) => ({ name, alts, variants, title, duration }));
 }
 
 // Großes Originalbild (falls vorhanden) statt der kleinen Kachel.

@@ -3,6 +3,7 @@ import { store } from './store.js';
 import { player } from './player.js';
 import { icons } from './icons.js';
 import { aiAvailable, aiSearch } from './ai.js';
+import { download, cancelDownload, removeDownload, isDownloaded, downloadedList, downloadProgress, onDownloadChange, downloadedBytes } from './offline.js';
 import { account, syncStatus, onSyncStatus, sendCode, verifyCode, signOut, syncNow, startSync } from './sync.js';
 
 // ---------- Hilfsfunktionen ----------
@@ -23,6 +24,11 @@ function fmtLong(sec) {
   if (h && m) return `${h} Std. ${m} Min.`;
   if (h) return `${h} Std.`;
   return `${Math.max(m, sec ? 1 : 0)} Min.`;
+}
+
+function fmtBytes(b) {
+  if (!b) return '0 MB';
+  return b >= 1e9 ? `${(b / 1e9).toFixed(1).replace('.', ',')} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`;
 }
 
 function htmlToText(html) {
@@ -316,17 +322,20 @@ function renderLibrary(params) {
     continue: store.continueList(),
     favs: store.favoriteList(),
     done: all.filter((p) => p.finished).sort((a, b) => b.updatedAt - a.updatedAt),
+    downloads: downloadedList(),
   };
-  const labels = { continue: 'Weiterhören', favs: 'Gemerkt', done: 'Gehört' };
+  const labels = { continue: 'Weiterhören', favs: 'Gemerkt', done: 'Gehört', downloads: 'Geladen' };
   const list = lists[tab] || [];
 
   view.innerHTML = `
     <h1 class="page-title">Mediathek</h1>
     <div class="segmented">${Object.entries(labels).map(([k, l]) => `<a href="#/library?tab=${k}" class="${k === tab ? 'on' : ''}">${l}<span>${lists[k].length}</span></a>`).join('')}</div>
+    ${tab === 'downloads' && list.length ? `<p class="meta-line">Belegt: ${fmtBytes(downloadedBytes())} auf diesem Gerät</p>` : ''}
     ${list.length ? `<ul class="rows">${list.map((p) => libRow(p, tab)).join('')}</ul>` : `<p class="empty">${{
       continue: 'Noch nichts angefangen. Alles, was du hörst, landet automatisch hier.',
       favs: 'Tippe bei einem Titel auf das Herz, um ihn dir zu merken.',
       done: 'Fertig gehörte Titel erscheinen hier.',
+      downloads: 'Lade Titel über den Download-Knopf auf der Titelseite herunter – dann laufen sie ohne Internet und ohne mobile Daten.',
     }[tab]}</p>`}
     <section class="section data-box" id="sync-box">${syncBox()}</section>`;
   list.slice(0, 10).forEach((p) => getItem(p.id).catch(() => {}));
@@ -373,6 +382,12 @@ function libRow(p, tab) {
   const info = progressInfo(store.progress(p.id));
   let sub = esc(p.creator || '');
   if (tab === 'continue' && info) sub = `Kapitel ${(p.track || 0) + 1}/${p.trackCount || '?'} · ${info.left ? `noch ${fmtLong(info.left)}` : ''}`;
+  if (tab === 'downloads') {
+    const pr = downloadProgress(p.id);
+    sub = pr != null ? `Wird geladen … ${Math.round(pr * 100)} %`
+      : p.status === 'done' ? `${fmtBytes(p.bytes)} · offline verfügbar`
+      : 'Unvollständig – auf der Titelseite erneut laden';
+  }
   return `
     <li class="row">
       <a class="row-main" href="#/item/${encodeURIComponent(p.id)}">
@@ -412,6 +427,7 @@ async function renderItem(id, isCurrent) {
         <div class="item-actions">
           <button class="btn" id="item-play"></button>
           <button class="ic fav-btn" data-fav="${esc(item.id)}" aria-label="Merken"></button>
+          ${item.tracks.length ? `<button class="ic dl-btn" data-dl="${esc(item.id)}" aria-label="Herunterladen"></button>` : ''}
           <a class="ic" href="${itemPageUrl(item.id)}" target="_blank" rel="noopener" aria-label="Auf archive.org öffnen">${icons.external}</a>
         </div>
         ${desc ? `<div class="desc clamp">${esc(desc)}</div><button class="link more-desc">Mehr</button>` : ''}
@@ -459,6 +475,14 @@ function updateItemView() {
   const isCur = player.item?.id === id;
   const fav = store.isFavorite(id);
 
+  const dlBtn = $('.dl-btn', view);
+  if (dlBtn) {
+    const pr = downloadProgress(id);
+    dlBtn.classList.toggle('on', isDownloaded(id));
+    dlBtn.classList.toggle('busy', pr != null);
+    dlBtn.innerHTML = pr != null ? `<span class="dl-pct">${Math.round(pr * 100)}%</span>` : isDownloaded(id) ? icons.downloaded : icons.download;
+    dlBtn.setAttribute('aria-label', pr != null ? 'Download abbrechen' : isDownloaded(id) ? 'Download löschen' : 'Herunterladen');
+  }
   const favBtn = $('.fav-btn', view);
   favBtn.innerHTML = fav ? icons.heartFill : icons.heart;
   favBtn.classList.toggle('on', fav);
@@ -668,6 +692,21 @@ document.addEventListener('click', async (e) => {
   const play = e.target.closest('[data-play]');
   if (play) { e.preventDefault(); e.stopPropagation(); return playById(play.dataset.play); }
 
+  const dl = e.target.closest('[data-dl]');
+  if (dl) {
+    const id = dl.dataset.dl;
+    if (downloadProgress(id) != null) { cancelDownload(id); toast('Download abgebrochen'); return; }
+    if (isDownloaded(id)) {
+      return optionSheet('Download löschen?', [{ label: 'Vom Gerät löschen', value: true }], async () => { await removeDownload(id); toast('Download gelöscht'); });
+    }
+    const item = cachedItem(id);
+    if (!item) return;
+    toast('Download gestartet – am besten im WLAN');
+    download(item).then(() => { if (isDownloaded(id)) toast(`„${item.title}“ ist jetzt offline verfügbar`); })
+      .catch((err) => toast(err.name === 'QuotaExceededError' ? 'Nicht genug Speicher auf dem Gerät' : err.message));
+    return;
+  }
+
   const fav = e.target.closest('[data-fav]');
   if (fav) {
     const item = cachedItem(fav.dataset.fav);
@@ -678,6 +717,7 @@ document.addEventListener('click', async (e) => {
   const rm = e.target.closest('[data-remove]');
   if (rm) {
     const id = rm.dataset.remove;
+    if (rm.dataset.tab === 'downloads') { await removeDownload(id); toast('Download gelöscht'); return route(); }
     if (rm.dataset.tab === 'favs') { const it = store.get().favorites[id]; if (it) store.toggleFavorite(it); }
     else store.removeProgress(id);
     return route();
@@ -805,7 +845,18 @@ if (lastId && !store.progress(lastId)?.removed) {
   getItem(lastId).then((item) => { if (!player.item) player.resume(item, false); }).catch(() => {});
 }
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+// Download-Fortschritt anzeigen (höchstens einmal pro Frame)
+let dlRaf = 0;
+onDownloadChange(() => {
+  if (dlRaf) return;
+  dlRaf = requestAnimationFrame(() => {
+    dlRaf = 0;
+    updateItemView();
+    if (/^#\/library\?tab=downloads/.test(location.hash)) route();
+  });
+});
+
+if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
