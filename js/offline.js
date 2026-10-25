@@ -29,6 +29,13 @@ export function downloadProgress(id) {
   return r ? (r.total ? r.done / r.total : 0) : null;
 }
 
+// Dateityp nach Endung (archive.org liefert ihn meist mit, als Rückfall die Endung)
+function mimeFor(name, header) {
+  if (header && /^(audio|video)\//.test(header)) return header.split(';')[0];
+  const ext = name.split('.').pop().toLowerCase();
+  return { mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4', mp4: 'video/mp4', flac: 'audio/flac', wav: 'audio/wav', opus: 'audio/ogg' }[ext] || 'application/octet-stream';
+}
+
 const pickVariant = (track) => {
   const mp3s = (track.variants || []).filter((v) => v.mp3 && v.size);
   if (!mp3s.length) return { name: track.name, size: (track.variants || [])[0]?.size || 0 };
@@ -70,7 +77,7 @@ export async function download(item) {
         state.done += value.length;
         emit(item.id);
       }
-      const blob = new Blob(chunks, { type: 'audio/mpeg' });
+      const blob = new Blob(chunks, { type: mimeFor(p.name, res.headers.get('Content-Type')) });
       await cache.put(p.key, new Response(blob, {
         headers: { 'Content-Type': blob.type, 'Content-Length': String(blob.size), 'Accept-Ranges': 'bytes' },
       }));
