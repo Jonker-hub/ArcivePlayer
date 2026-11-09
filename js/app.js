@@ -614,6 +614,42 @@ for (const s of $$('.scrub')) {
   });
 }
 
+// Auf Touch-Geräten reagiert die Zeitleiste erst nach langem Drücken, damit man nicht aus Versehen
+// spult. Danach verschiebt der Finger die Position relativ (kein Sprung an die Fingerstelle).
+const HOLD_MS = 450;
+if (matchMedia('(pointer: coarse)').matches) {
+  for (const wrap of $$('.np-scrub, .bar-scrub')) {
+    const input = $('.scrub', wrap);
+    let timer = 0, armed = false, x0 = 0, y0 = 0, v0 = 0;
+    const reset = () => { clearTimeout(timer); armed = false; wrap.classList.remove('armed'); };
+    const setValue = (x) => {
+      const w = input.getBoundingClientRect().width || 1;
+      input.value = Math.round(Math.min(1000, Math.max(0, v0 + ((x - x0) / w) * 1000)));
+      input.dispatchEvent(new Event('input'));
+    };
+    wrap.addEventListener('touchstart', (e) => {
+      reset();
+      if (e.touches.length !== 1 || !player.item) return;
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+      timer = setTimeout(() => {
+        armed = true; v0 = Number(input.value);
+        wrap.classList.add('armed');
+        navigator.vibrate?.(10);
+      }, HOLD_MS);
+    }, { passive: true });
+    wrap.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (armed) { e.preventDefault(); setValue(t.clientX); } else if (Math.hypot(t.clientX - x0, t.clientY - y0) > 10) reset();
+    }, { passive: false });
+    wrap.addEventListener('touchend', () => {
+      if (armed && scrubbing) input.dispatchEvent(new Event('change'));
+      reset();
+    });
+    wrap.addEventListener('touchcancel', () => { reset(); scrubbing = false; updateTimeUI(); });
+    wrap.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+}
+
 // Video-Einträge: Bild statt Cover im Vollbild-Player
 let videoOpenedFor = '';
 function showVideo() {
@@ -648,7 +684,7 @@ $('#bar-open').addEventListener('click', openNowPlaying);
 {
   let y0 = null, dy = 0;
   np.addEventListener('touchstart', (e) => {
-    if (e.target.closest('.scrub, .np-queue, button')) return;
+    if (e.target.closest('.np-scrub, .np-queue, button')) return;
     y0 = e.touches[0].clientY; dy = 0; np.style.transition = 'none';
   }, { passive: true });
   np.addEventListener('touchmove', (e) => {

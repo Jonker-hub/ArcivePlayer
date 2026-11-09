@@ -3,13 +3,15 @@
 
 import { trackUrl, coverUrl } from './api.js';
 import { store } from './store.js';
-import { hasDownload } from './offline.js';
+import { isDownloaded } from './offline.js';
+import * as buffer from './buffer.js';
 
 const SAVE_EVERY_MS = 4000;
 const isVideoFile = (name) => /\.(mp4|m4v|webm|ogv|mov)$/i.test(name || '');
-// Nur geladene Titel bekommen die Markierung, die der Service Worker abfängt; alles andere
-// streamt der Browser direkt (Safari scheitert an Streams, die durch den Service Worker laufen).
-const srcFor = (id, name) => trackUrl(id, name) + (hasDownload(id) ? '?offline=1' : '');
+const BUFFER_EVERY_MS = 5000;
+const noBuffer = new Set(); // Titel, deren Server keinen Skript-Zugriff erlaubt
+// Mit Service Worker über den Puffer (bzw. die heruntergeladene Datei) abspielen, sonst direkt streamen.
+const srcFor = (id, name) => (buffer.canBuffer() && (!noBuffer.has(id) || isDownloaded(id)) ? buffer.playUrl(trackUrl(id, name)) : trackUrl(id, name));
 
 class Player extends EventTarget {
   constructor() {
@@ -31,6 +33,9 @@ class Player extends EventTarget {
     this.finished = false;
     this.altIndex = 0; // nächste Ausweichdatei der aktuellen Spur
     this.netRetried = false; // nach einem Netzwerkfehler einmal neu laden
+    this.direct = false; // Puffer gescheitert: direkt streamen
+    this.bufferOk = false; // Puffer hat bei diesem Titel schon geliefert
+    this.lastBuffer = 0;
     this.wantPlay = false;
 
     // Ereignisse beider Elemente; das jeweils inaktive wird ignoriert
@@ -40,21 +45,33 @@ class Player extends EventTarget {
     on('loadedmetadata', () => this.applyPendingSeek());
     on('canplay', () => { this.loading = false; this.applyPendingSeek(); this.emit(); });
     on('waiting', () => { this.loading = true; this.emit(); });
-    on('playing', () => { this.loading = false; this.error = null; this.emit(); });
+    on('playing', () => { this.loading = false; this.error = null; if (this.audio.src.includes('?play=1')) this.bufferOk = true; this.emit(); });
     on('seeked', () => { this.confirmSeek(); this.save(true); });
     on('timeupdate', () => {
       this.confirmSeek();
       if (Date.now() - this.lastSave > SAVE_EVERY_MS) this.save();
+      if (Date.now() - this.lastBuffer > BUFFER_EVERY_MS) this.fillBuffer();
       this.updatePositionState();
       this.emit('time');
     });
-    on('play', () => { this.applyRate(); this.emit(); });
-    on('pause', () => { this.save(true); this.emit(); });
+    on('play', () => { this.applyRate(); this.fillBuffer(); this.emit(); });
+    on('pause', () => { this.save(true); buffer.stop(); this.emit(); });
     on('ended', () => this.onEnded());
     on('error', () => {
       const a = this.audio;
       const code = a.error?.code;
       const resumeAt = this.pendingSeek ?? (a.currentTime || 0);
+      // Puffer klappt nicht (der Service Worker hat schon wiederholt): dieselbe Datei direkt streamen.
+      // Lief der Puffer bei diesem Titel nie, erlaubt der Server meist keinen Skript-Zugriff (CORS)
+      // – dann für diese Sitzung gleich direkt.
+      if (!this.direct && a.src.includes('?play=1')) {
+        this.direct = true;
+        if (!this.bufferOk) noBuffer.add(this.item.id);
+        a.src = trackUrl(this.item.id, this.track.name);
+        this.pendingSeek = resumeAt > 0 ? resumeAt : null;
+        if (this.wantPlay) this.play();
+        return;
+      }
       // Kurzer Aussetzer der Verbindung: dieselbe Datei einmal neu laden
       if (code === 2 && navigator.onLine && !this.netRetried) {
         this.netRetried = true;
@@ -64,7 +81,7 @@ class Player extends EventTarget {
         if (this.wantPlay) this.play();
         return;
       }
-      // Erst die Ausweichdateien derselben Aufnahme probieren (andere MP3-Qualität, Ogg …)
+      // Dann die Ausweichdateien derselben Aufnahme probieren (andere MP3-Qualität, Ogg …)
       const alts = this.track?.alts || [];
       if (this.altIndex < alts.length) {
         this.audio.src = trackUrl(this.item.id, alts[this.altIndex++]);
@@ -128,6 +145,8 @@ class Player extends EventTarget {
     if (!sameTrack) {
       this.altIndex = 0;
       this.netRetried = false;
+      this.direct = false;
+      this.bufferOk = false;
       const wanted = isVideoFile(item.tracks[index].name) ? this.videoEl : this.audioEl;
       if (wanted !== this.audio) { // zwischen Audio und Video wechseln
         this.audio.pause();
@@ -169,6 +188,15 @@ class Player extends EventTarget {
   }
 
   pause() { this.wantPlay = false; this.audio.pause(); }
+
+  // Die nächsten Minuten vorladen (nicht bei heruntergeladenen Titeln oder direktem Streamen)
+  fillBuffer() {
+    this.lastBuffer = Date.now();
+    const { item, index } = this;
+    if (!item || !this.wantPlay || this.direct || isDownloaded(item.id) || !this.audio.src.includes('?play=1')) return;
+    const next = item.tracks[index + 1];
+    buffer.fill(trackUrl(item.id, item.tracks[index].name), this.currentTime, this.duration, next && trackUrl(item.id, next.name));
+  }
 
   toggle() { this.playing ? this.pause() : this.play(); }
 

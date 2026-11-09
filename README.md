@@ -8,6 +8,8 @@ Web-Player für Hörbücher und Audio aus dem [Internet Archive](https://archive
 - Kapitelliste, ±15/30 s, Tempo 0,75–2,5×, Schlaf-Timer, Sperrbildschirm-Steuerung (Media Session)
 - Installierbar als App (PWA): in Safari „Teilen → Zum Home-Bildschirm“
 - **Offline hören:** Titel herunterladen (kleinste MP3-Variante), danach Wiedergabe ohne Internet/mobile Daten; Verwaltung in der Mediathek unter „Geladen“
+- **Puffer:** Beim Hören werden die nächsten ~15 Minuten (max. 40 MB) und der Anfang des nächsten Kapitels vorgeladen, damit Funklöcher nicht zu Stopps führen
+- **Zeitleiste auf Touch-Geräten:** erst lang drücken, dann ziehen – kein versehentliches Spulen
 - Konto per E-Mail (ohne Passwort): Hörstand, Merkliste und „Gehört“ auf allen Geräten
 - KI-Suche (OpenRouter, Claude Haiku 5.5) über eine Supabase Edge Function
 
