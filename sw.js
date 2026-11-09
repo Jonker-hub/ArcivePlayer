@@ -2,7 +2,7 @@
 // - App-Dateien: network-first, offline aus dem Cache (die App startet auch ohne Netz)
 // - Bibliotheken vom CDN (Supabase): einmal laden, dann aus dem Cache
 // - Heruntergeladene Hörbücher: direkt vom Gerät, inkl. Teilbereichen (Range), die Safari zum Abspielen braucht
-const CACHE = 'arciveplayer-v11';
+const CACHE = 'arciveplayer-v12';
 const CDN_CACHE = 'arciveplayer-cdn';
 const DOWNLOAD_CACHE = 'arciveplayer-downloads'; // wird nie automatisch gelöscht
 const KEEP = [CACHE, CDN_CACHE, DOWNLOAD_CACHE];
@@ -21,9 +21,17 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // nur Audiodateien und Cover; Suche und Metadaten gehen unverändert ins Netz
-  if (url.hostname === 'archive.org' && /^\/(download|services\/img)\//.test(url.pathname)) {
-    e.respondWith(fromDownloads(req));
+  // Nur heruntergeladene Titel (vom Player mit ?offline=1 markiert) und Cover.
+  // Normale Streams fasst der Service Worker nicht an – Safari bricht sonst mit Netzwerkfehler ab.
+  if (url.hostname === 'archive.org') {
+    if (url.pathname.startsWith('/download/') && url.searchParams.has('offline')) {
+      e.respondWith(fromDownloads(req, url.origin + url.pathname));
+      return;
+    }
+    if (url.pathname.startsWith('/services/img/')) {
+      e.respondWith(fromDownloads(req, req.url));
+      return;
+    }
     return;
   }
   if (url.hostname === 'cdn.jsdelivr.net') {
@@ -48,10 +56,10 @@ self.addEventListener('fetch', (e) => {
 });
 
 // Geladene Datei vom Gerät liefern, sonst normal übers Netz
-async function fromDownloads(req) {
+async function fromDownloads(req, key) {
   const cache = await caches.open(DOWNLOAD_CACHE);
-  const hit = await cache.match(req.url);
-  if (!hit) return fetch(req);
+  const hit = await cache.match(key);
+  if (!hit) return fetch(key === req.url ? req : key, { headers: req.headers });
   const range = req.headers.get('range');
   if (!range) return hit;
   const blob = await hit.blob();

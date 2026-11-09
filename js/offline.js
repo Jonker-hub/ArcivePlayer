@@ -21,6 +21,7 @@ function emit(id) {
 
 export const onDownloadChange = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 export const isDownloaded = (id) => readIndex()[id]?.status === 'done';
+export const hasDownload = (id) => !!readIndex()[id]; // auch teilweise geladen
 export const downloadedList = () => Object.values(readIndex()).sort((a, b) => b.at - a.at);
 
 // Fortschritt eines laufenden Downloads (0–1) oder null

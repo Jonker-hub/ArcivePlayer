@@ -3,9 +3,13 @@
 
 import { trackUrl, coverUrl } from './api.js';
 import { store } from './store.js';
+import { hasDownload } from './offline.js';
 
 const SAVE_EVERY_MS = 4000;
 const isVideoFile = (name) => /\.(mp4|m4v|webm|ogv|mov)$/i.test(name || '');
+// Nur geladene Titel bekommen die Markierung, die der Service Worker abfängt; alles andere
+// streamt der Browser direkt (Safari scheitert an Streams, die durch den Service Worker laufen).
+const srcFor = (id, name) => trackUrl(id, name) + (hasDownload(id) ? '?offline=1' : '');
 
 class Player extends EventTarget {
   constructor() {
@@ -26,6 +30,7 @@ class Player extends EventTarget {
     this.loading = false;
     this.finished = false;
     this.altIndex = 0; // nächste Ausweichdatei der aktuellen Spur
+    this.netRetried = false; // nach einem Netzwerkfehler einmal neu laden
     this.wantPlay = false;
 
     // Ereignisse beider Elemente; das jeweils inaktive wird ignoriert
@@ -48,17 +53,26 @@ class Player extends EventTarget {
     on('ended', () => this.onEnded());
     on('error', () => {
       const a = this.audio;
+      const code = a.error?.code;
+      const resumeAt = this.pendingSeek ?? (a.currentTime || 0);
+      // Kurzer Aussetzer der Verbindung: dieselbe Datei einmal neu laden
+      if (code === 2 && navigator.onLine && !this.netRetried) {
+        this.netRetried = true;
+        const src = a.src;
+        a.src = src;
+        this.pendingSeek = resumeAt > 0 ? resumeAt : null;
+        if (this.wantPlay) this.play();
+        return;
+      }
       // Erst die Ausweichdateien derselben Aufnahme probieren (andere MP3-Qualität, Ogg …)
       const alts = this.track?.alts || [];
       if (this.altIndex < alts.length) {
-        const resumeAt = this.pendingSeek ?? (a.currentTime || 0);
         this.audio.src = trackUrl(this.item.id, alts[this.altIndex++]);
         this.pendingSeek = resumeAt > 0 ? resumeAt : null;
         if (this.wantPlay) this.play();
         return;
       }
       this.loading = false;
-      const code = a.error?.code;
       this.error = !navigator.onLine ? 'Offline – dieser Titel ist nicht heruntergeladen.'
         : code === 4 ? 'Dieses Format kann dein Browser nicht abspielen.'
         : code === 2 ? 'Netzwerkfehler beim Laden. Bitte nochmal versuchen.'
@@ -113,6 +127,7 @@ class Player extends EventTarget {
 
     if (!sameTrack) {
       this.altIndex = 0;
+      this.netRetried = false;
       const wanted = isVideoFile(item.tracks[index].name) ? this.videoEl : this.audioEl;
       if (wanted !== this.audio) { // zwischen Audio und Video wechseln
         this.audio.pause();
@@ -120,7 +135,7 @@ class Player extends EventTarget {
         this.audio.load();
         this.audio = wanted;
       }
-      this.audio.src = trackUrl(item.id, item.tracks[index].name);
+      this.audio.src = srcFor(item.id, item.tracks[index].name);
       this.loading = autoplay;
     }
     this.pendingSeek = time > 0 ? time : null;

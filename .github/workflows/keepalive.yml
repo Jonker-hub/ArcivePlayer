@@ -1,10 +1,11 @@
 name: Supabase wach halten
 
-# Kostenlose Supabase-Projekte pausieren nach 7 Tagen ohne Aktivität –
-# dann fallen KI-Suche und Konto-Sync aus. Alle 3 Tage eine kleine Abfrage verhindert das.
+# Kostenlose Supabase-Projekte pausieren, wenn eine Woche lang zu wenig Datenbank-Aktivität da ist –
+# dann fallen KI-Suche und Konto-Sync aus. Laut Supabase reichen ein paar Anfragen pro Tag,
+# daher dreimal täglich mehrere Abfragen.
 on:
   schedule:
-    - cron: '17 6 */3 * *'
+    - cron: '17 */8 * * *'
   workflow_dispatch:
 
 permissions:
@@ -19,4 +20,9 @@ jobs:
         run: |
           URL=$(grep -o "https://[a-z0-9]*\.supabase\.co" js/config.js | head -1)
           KEY=$(grep -o "eyJ[^'\"]*" js/config.js | head -1)
-          curl -fsS "$URL/rest/v1/user_state?select=user_id&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY"
+          H=(-H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json")
+          for i in 1 2 3; do
+            curl -fsS --retry 3 --retry-delay 20 "$URL/rest/v1/user_state?select=user_id&limit=1" "${H[@]}"
+            echo
+            sleep 5
+          done
