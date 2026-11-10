@@ -538,10 +538,17 @@ function updatePlayerUI() {
     b.classList.toggle('loading', player.loading && !player.error);
   }
   for (const b of $$('[data-act="rate"]')) b.textContent = `${String(player.rate).replace('.', ',')}×`;
+  // Mond-Symbol mit Restzeit, solange der Timer läuft
+  const sleepText = player.sleep?.until ? fmt(player.sleepLeft / 1000) : player.sleep ? 'Kapitel' : '';
   for (const b of $$('[data-act="sleep"]')) {
     b.classList.toggle('on', !!player.sleep);
-    b.title = player.sleep?.until ? `Stopp in ${fmt((player.sleep.until - Date.now()) / 1000)}` : player.sleep ? 'Stopp am Kapitelende' : 'Schlaf-Timer';
+    b.classList.toggle('with-label', !!sleepText);
+    const html = icons.moon + (sleepText ? `<span class="sleep-left">${sleepText}</span>` : '');
+    if (b.dataset.html !== html) { b.innerHTML = html; b.dataset.html = html; }
+    b.title = sleepText ? `Schlaf-Timer: ${sleepText}` : 'Schlaf-Timer';
   }
+  const count = $('.sheet .sleep-count');
+  if (count && player.sleep?.until) count.textContent = fmt(player.sleepLeft / 1000);
   const fav = store.isFavorite(item.id);
   const favBtn = $('.np .fav');
   favBtn.innerHTML = fav ? icons.heartFill : icons.heart;
@@ -726,7 +733,52 @@ function optionSheet(title, options, onPick) {
 }
 
 const RATES = [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5];
-const SLEEPS = [[null, 'Aus'], [5, '5 Minuten'], [10, '10 Minuten'], [15, '15 Minuten'], [30, '30 Minuten'], [45, '45 Minuten'], [60, '1 Stunde'], ['track', 'Ende des Kapitels']];
+const SLEEP_MINUTES = [5, 10, 15, 20, 30, 45, 60, 90, 120];
+const sleepLabel = (m) => (m === 1 ? '1 Minute' : m === 60 ? '1 Stunde' : m > 60 && m % 30 === 0 ? `${String(m / 60).replace('.', ',')} Stunden` : `${m} Minuten`);
+const sleepShort = (m) => (m < 60 ? `${m} Min` : `${String(m / 60).replace('.', ',')} Std`);
+// Kann der Browser die Lautstärke per Skript ändern? (iPhone: nein – dann kein Ausblenden)
+const canFade = (() => { const a = new Audio(); a.volume = 0.5; return a.volume === 0.5; })();
+
+function sleepSheet() {
+  const s = player.sleep;
+  const status = s?.until
+    ? `<div class="sleep-now"><span>Stoppt in <b class="sleep-count">${fmt(player.sleepLeft / 1000)}</b></span>
+        <span class="sleep-plus"><button data-plus="5">+5 Min</button><button data-plus="15">+15 Min</button></span></div>`
+    : s ? '<div class="sleep-now"><span>Stoppt am Ende des Kapitels</span></div>' : '';
+  openSheet(`
+    <div class="sheet-title">Schlaf-Timer</div>
+    ${status}
+    <div class="sleep-grid">${SLEEP_MINUTES.map((m) => `<button data-sleep="${m}">${sleepShort(m)}</button>`).join('')}</div>
+    <div class="sheet-list">
+      <form class="sleep-custom">
+        <input name="min" type="number" min="1" max="720" inputmode="numeric" placeholder="Eigene Zeit" aria-label="Eigene Zeit in Minuten">
+        <span>Min</span><button>Stellen</button>
+      </form>
+      <button data-sleep="track" class="${s?.endOfTrack ? 'on' : ''}">Ende des Kapitels${s?.endOfTrack ? icons.check : ''}</button>
+      ${s ? '<button data-sleep="off">Timer aus</button>' : ''}
+    </div>
+    ${canFade ? '<p class="sheet-hint">In der letzten Minute wird es langsam leiser.</p>' : ''}
+    <button class="sheet-cancel" data-act="sheet-close">Fertig</button>`, (e) => {
+    const plus = e.target.closest('[data-plus]');
+    if (plus) { player.extendSleep(+plus.dataset.plus); toast(`Timer um ${plus.dataset.plus} Minuten verlängert`); return closeSheet(); }
+    const b = e.target.closest('[data-sleep]');
+    if (!b) return;
+    const v = b.dataset.sleep;
+    if (v === 'off') { player.setSleep(null); toast('Schlaf-Timer aus'); } else {
+      player.setSleep(v === 'track' ? 'track' : +v);
+      toast(v === 'track' ? 'Stoppt am Ende des Kapitels' : `Stoppt in ${sleepLabel(+v)}`);
+    }
+    closeSheet();
+  });
+  $('.sheet .sleep-custom').onsubmit = (e) => {
+    e.preventDefault();
+    const m = Math.round(+e.target.min.value);
+    if (!(m >= 1 && m <= 720)) return toast('Bitte 1 bis 720 Minuten eingeben');
+    player.setSleep(m);
+    toast(`Stoppt in ${sleepLabel(m)}`);
+    closeSheet();
+  };
+}
 
 // ---------- Globale Aktionen ----------
 
@@ -807,10 +859,7 @@ document.addEventListener('click', async (e) => {
     case 'rate':
       return optionSheet('Wiedergabetempo', RATES.map((r) => ({ label: `${String(r).replace('.', ',')}×`, value: r, active: r === player.rate })), (r) => player.setRate(r));
     case 'sleep':
-      return optionSheet('Schlaf-Timer', SLEEPS.map(([v, l]) => ({
-        label: l, value: v,
-        active: v === null ? !player.sleep : v === 'track' ? !!player.sleep?.endOfTrack : false,
-      })), (v) => { player.setSleep(v); toast(v ? 'Schlaf-Timer gestellt' : 'Schlaf-Timer aus'); });
+      return sleepSheet();
     case 'sheet-close': return closeSheet();
     case 'login-back':
       loginEmail = '';

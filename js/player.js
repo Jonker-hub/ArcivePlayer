@@ -9,6 +9,7 @@ import * as buffer from './buffer.js';
 const SAVE_EVERY_MS = 4000;
 const isVideoFile = (name) => /\.(mp4|m4v|webm|ogv|mov)$/i.test(name || '');
 const BUFFER_EVERY_MS = 5000;
+const SLEEP_FADE_MS = 45000; // Schlaf-Timer: so lange vor dem Stopp langsam leiser werden
 const noBuffer = new Set(); // Titel, deren Server keinen Skript-Zugriff erlaubt
 // Mit Service Worker über den Puffer (bzw. die heruntergeladene Datei) abspielen, sonst direkt streamen.
 const srcFor = (id, name) => (buffer.canBuffer() && (!noBuffer.has(id) || isDownloaded(id)) ? buffer.playUrl(trackUrl(id, name)) : trackUrl(id, name));
@@ -51,6 +52,7 @@ class Player extends EventTarget {
       this.confirmSeek();
       if (Date.now() - this.lastSave > SAVE_EVERY_MS) this.save();
       if (Date.now() - this.lastBuffer > BUFFER_EVERY_MS) this.fillBuffer();
+      this.checkSleep(false);
       this.updatePositionState();
       this.emit('time');
     });
@@ -303,18 +305,42 @@ class Player extends EventTarget {
     if (value === 'track') this.sleep = { endOfTrack: true };
     else if (value) {
       this.sleep = { until: Date.now() + value * 60000 };
-      this.sleepTimer = setInterval(() => {
-        if (Date.now() >= this.sleep.until) { this.pause(); this.clearSleep(); }
-        this.emit();
-      }, 1000);
+      this.sleepTimer = setInterval(() => this.checkSleep(), 1000);
     }
     this.emit();
+  }
+
+  // Laufenden Timer verlängern (oder neu stellen)
+  extendSleep(minutes) {
+    if (!this.sleep?.until) return this.setSleep(minutes);
+    this.sleep.until = Math.max(this.sleep.until, Date.now()) + minutes * 60000;
+    this.setVolume(1);
+    this.emit();
+  }
+
+  get sleepLeft() {
+    return this.sleep?.until ? Math.max(0, this.sleep.until - Date.now()) : null;
+  }
+
+  // Läuft über das Intervall und zusätzlich bei jedem timeupdate – im Hintergrund (gesperrter
+  // Bildschirm) drosseln Browser Intervalle, timeupdate kommt aber weiter, solange Ton läuft.
+  checkSleep(emit = true) {
+    const left = this.sleepLeft;
+    if (left == null) return;
+    if (left <= 0) { this.pause(); this.clearSleep(); return; }
+    if (this.playing) this.setVolume(Math.min(1, left / SLEEP_FADE_MS)); // zum Ende leiser (nicht auf dem iPhone)
+    if (emit) this.emit();
+  }
+
+  setVolume(v) {
+    for (const el of [this.audioEl, this.videoEl]) if (el.volume !== v) el.volume = v;
   }
 
   clearSleep() {
     clearInterval(this.sleepTimer);
     this.sleepTimer = null;
     this.sleep = null;
+    this.setVolume(1);
     this.emit();
   }
 
